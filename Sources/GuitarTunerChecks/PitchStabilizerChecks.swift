@@ -62,14 +62,16 @@ func runPitchStabilizerChecks(_ runner: CheckRunner) {
     runner.near(held.frequency ?? .nan, 146.83, accuracy: 0.001, "held value is the previous pitch")
 
     let expired = stabilizer.process(gatedAnalysis(), at: 0.5)
-    runner.expect(!expired.isHeld, "hold expires")
-    runner.isNil(expired.frequency, "reading clears after the hold expires")
+    runner.expect(expired.isHeld, "reading is still held at 0.5 s (hold is 1.5 s)")
+    let wellExpired = stabilizer.process(gatedAnalysis(), at: 2.0)
+    runner.expect(!wellExpired.isHeld, "hold expires eventually")
+    runner.isNil(wellExpired.frequency, "reading clears after the hold expires")
 
     // Unclear frames (loud but not periodic) are trusted for less time.
     stabilizer = PitchStabilizer()
     _ = stabilizer.process(pitched(146.83), at: 0)
     runner.isNotNil(stabilizer.process(unclear(), at: 0.1).frequency, "unclear frame holds briefly")
-    runner.isNil(stabilizer.process(unclear(), at: 0.3).frequency, "unclear frame expires sooner")
+    runner.isNil(stabilizer.process(unclear(), at: 1.0).frequency, "unclear frame expires sooner than a gated one")
 
     stabilizer = PitchStabilizer()
     _ = stabilizer.process(pitched(200), at: 0)

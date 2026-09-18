@@ -129,7 +129,17 @@ final class AnalysisPipeline: @unchecked Sendable {
 
         let frame = window
         let now = Date.timeIntervalSinceReferenceDate
-        let analysis = detector.analyze(samples: frame, sampleRate: sampleRate, gate: noiseFloor.gate)
+        // Easier to keep a note than to start one: a decaying string stays on the dial
+        // after its clarity has dipped below the threshold needed to acquire it.
+        let clarityThreshold = stabilizer.isTracking
+            ? detector.configuration.retentionClarity
+            : detector.configuration.minimumClarity
+        let analysis = detector.analyze(
+            samples: frame,
+            sampleRate: sampleRate,
+            gate: noiseFloor.gate,
+            minimumClarity: clarityThreshold
+        )
         noiseFloor.update(rms: analysis.rms, isSignalPresent: analysis.frequency != nil)
 
         frameIndex += 1

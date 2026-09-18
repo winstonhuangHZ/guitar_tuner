@@ -11,7 +11,7 @@ public struct PitchStabilizerConfiguration: Sendable, Equatable {
 
     public init(
         medianWindow: Int = 5,
-        holdDuration: TimeInterval = 0.35,
+        holdDuration: TimeInterval = 1.5,
         resetThresholdCents: Double = 250
     ) {
         self.medianWindow = max(1, medianWindow | 1)
@@ -35,6 +35,10 @@ public struct PitchStabilizer: Sendable {
     }
 
     public var lastStableFrequency: Double? { lastFrequency }
+
+    /// True while a note is being tracked or held — the pipeline uses this to switch the
+    /// detector to its lower `retentionClarity` threshold.
+    public var isTracking: Bool { lastFrequency != nil }
 
     public mutating func process(_ analysis: PitchAnalysis, at time: TimeInterval) -> StabilizedPitch {
         guard let frequency = analysis.frequency else {

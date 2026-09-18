@@ -11,5 +11,6 @@ runRingBufferChecks(runner)
 runTunerEvaluatorChecks(runner)
 runAnalysisProfileChecks(runner)
 runSpectrumChecks(runner)
+runAdaptiveGateChecks(runner)
 
 exit(runner.report() ? 0 : 1)

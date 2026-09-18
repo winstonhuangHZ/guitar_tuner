@@ -15,6 +15,10 @@ public struct PitchDetectionConfiguration: Sendable, Equatable {
     public var peakSelectionRatio: Double
     /// Minimum NSDF value at the chosen lag; below this the frame is "unclear".
     public var minimumClarity: Double
+    /// Lower threshold used *while already tracking* the same note. Starting a reading
+    /// needs `minimumClarity`, keeping one needs only this, so a decaying string stays on
+    /// the dial instead of vanishing the moment its clarity dips.
+    public var retentionClarity: Double
     /// Below this many samples the detector refuses to run.
     public var minimumSampleCount: Int
 
@@ -25,6 +29,7 @@ public struct PitchDetectionConfiguration: Sendable, Equatable {
         minimumRMS: Double = 0.0035,
         peakSelectionRatio: Double = 0.85,
         minimumClarity: Double = 0.5,
+        retentionClarity: Double = 0.3,
         minimumSampleCount: Int = 512
     ) {
         self.minFrequency = minFrequency
@@ -33,6 +38,7 @@ public struct PitchDetectionConfiguration: Sendable, Equatable {
         self.minimumRMS = minimumRMS
         self.peakSelectionRatio = peakSelectionRatio
         self.minimumClarity = minimumClarity
+        self.retentionClarity = retentionClarity
         self.minimumSampleCount = minimumSampleCount
     }
 

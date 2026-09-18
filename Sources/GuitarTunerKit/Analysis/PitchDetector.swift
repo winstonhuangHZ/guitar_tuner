@@ -25,9 +25,15 @@ public struct PitchDetector: Sendable {
 
     /// Analyses the *most recent* samples. `gate` is the RMS threshold to apply; pass
     /// `nil` to use `configuration.minimumRMS`.
-    public mutating func analyze(samples: [Float], sampleRate: Double, gate: Double? = nil) -> PitchAnalysis {
+    public mutating func analyze(
+        samples: [Float],
+        sampleRate: Double,
+        gate: Double? = nil,
+        minimumClarity: Double? = nil
+    ) -> PitchAnalysis {
         let config = configuration
         let effectiveGate = max(gate ?? config.minimumRMS, 0)
+        let requiredClarity = minimumClarity ?? config.minimumClarity
 
         guard sampleRate > 0, samples.count >= config.minimumSampleCount else {
             return .silent
@@ -46,7 +52,7 @@ public struct PitchDetector: Sendable {
             return analysis
         }
 
-        guard let estimate = estimatePeriod(sampleRate: sampleRate) else {
+        guard let estimate = estimatePeriod(sampleRate: sampleRate, minimumClarity: requiredClarity) else {
             return analysis
         }
 
@@ -87,7 +93,10 @@ public struct PitchDetector: Sendable {
 
     // MARK: - NSDF
 
-    private mutating func estimatePeriod(sampleRate: Double) -> (frequency: Double, clarity: Double, lag: Double)? {
+    private mutating func estimatePeriod(
+        sampleRate: Double,
+        minimumClarity: Double
+    ) -> (frequency: Double, clarity: Double, lag: Double)? {
         let config = configuration
         let count = window.count
 
@@ -121,7 +130,7 @@ public struct PitchDetector: Sendable {
         nsdf[0] = 1
 
         guard let peak = selectPeak(minLag: minLag, maxLag: maxLag) else { return nil }
-        guard peak.value >= Float(config.minimumClarity) else { return nil }
+        guard peak.value >= Float(minimumClarity) else { return nil }
 
         let refinedLag = parabolicLag(around: peak.index, minLag: minLag, maxLag: maxLag)
         guard refinedLag > 0 else { return nil }

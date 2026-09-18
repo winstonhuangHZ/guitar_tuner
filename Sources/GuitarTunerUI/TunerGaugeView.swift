@@ -136,7 +136,14 @@ public struct TunerGaugeView: View {
         .frame(width: radius * 2, height: radius * 2)
         .rotationEffect(.degrees(needleAngle))
         .animation(.interpolatingSpring(stiffness: 120, damping: 14), value: needleAngle)
-        .opacity(isActive && reading.isSignalPresent ? 1 : 0.35)
+        // A held reading (the string has stopped but the hold has not expired yet) is drawn
+        // slightly dimmer so it is clear the dial is not measuring right now.
+        .opacity(needleOpacity)
+    }
+
+    private var needleOpacity: Double {
+        guard isActive, reading.isSignalPresent else { return 0.35 }
+        return reading.isHeld ? 0.62 : 1
     }
 
     // MARK: - Readout
@@ -170,7 +177,9 @@ public struct TunerGaugeView: View {
         }
         .frame(width: radius * 1.02)
         .offset(y: radius * 0.06)
+        .opacity(reading.isHeld ? 0.72 : 1)
         .animation(.easeOut(duration: 0.18), value: reading.isSignalPresent)
+        .animation(.easeOut(duration: 0.25), value: reading.isHeld)
     }
 
     private var targetLabel: String {

@@ -14,13 +14,13 @@ func runSignalMetricsChecks(_ runner: CheckRunner) {
     runner.near(SignalMetrics.normalizedLevel(rms: 0), 0, accuracy: 1e-9, "level floor")
     runner.near(SignalMetrics.normalizedLevel(rms: 0.001), 0, accuracy: 1e-9, "very quiet level")
 
-    // The adaptive floor rises towards the room and falls back slowly.
+    // The adaptive floor rises towards a steady room and falls back with it.
     var estimator = NoiseFloorEstimator()
     let startGate = estimator.gate
-    for _ in 0..<40 {
-        estimator.update(rms: 0.02, isSignalPresent: false)
+    for _ in 0..<400 {
+        estimator.update(rms: 0.002, isSignalPresent: false)
     }
-    runner.greater(estimator.gate, startGate * 10, "gate follows ambient noise")
+    runner.greater(estimator.gate, startGate * 1.8, "gate follows a steady room")
     runner.lessOrEqual(estimator.floor, estimator.maximumFloor, "floor is bounded")
 
     let raised = estimator.floor

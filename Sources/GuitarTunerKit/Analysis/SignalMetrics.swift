@@ -66,36 +66,55 @@ public enum SignalMetrics {
 }
 
 /// Tracks the ambient noise floor so the RMS gate follows the room instead of using a
-/// single hard-coded threshold. Ambient noise pushes the floor up quickly; the floor
-/// only creeps back down while a real signal is present, which keeps the gate stable
-/// during sustained notes.
+/// single hard-coded threshold.
+///
+/// The rule that makes this safe for a tuner: **only levels close to the quietest recent
+/// level may raise the floor.** A plucked string is loud, and its attack is broadband and
+/// often unpitched, so a naive "follow the RMS while no pitch is detected" estimator
+/// climbs to the note level within a second or two — the gate then sits above the
+/// instrument and the tuner goes deaf after a few strums. Keeping the rise anchored to
+/// the quiet level means notes can only ever *lower* the estimate (through their decay
+/// tails and the gaps between them), which is exactly the information we want.
 public struct NoiseFloorEstimator: Sendable, Equatable {
     public var initialFloor: Double
     public var minimumFloor: Double
     public var maximumFloor: Double
+    /// Gate = floor x multiplier.
     public var multiplier: Double
-    /// How fast the floor follows the room while the gate is closed.
-    public var attackRate: Double
-    /// How fast the floor drifts back down while a signal is present.
-    public var releaseRate: Double
+    /// A frame may only raise the floor while it is quieter than the ambient estimate
+    /// times this factor (~9.5 dB at the default).
+    public var ambientHeadroom: Double
+    /// How fast the floor follows the room *down*.
+    public var descentRate: Double
+    /// How fast the floor creeps *up* towards a steadily louder room.
+    public var ascentRate: Double
+    /// How quickly the tracked quiet level forgets one unusually quiet moment.
+    public var quietDriftRate: Double
 
     public private(set) var floor: Double
+    /// Quietest recent frame — the ambient estimate the floor is allowed to approach.
+    public private(set) var quietLevel: Double
 
     public init(
-        initialFloor: Double = 0.0015,
-        minimumFloor: Double = 0.00002,
-        maximumFloor: Double = 0.06,
+        initialFloor: Double = 0.001,
+        minimumFloor: Double = 0.0005,
+        maximumFloor: Double = 0.05,
         multiplier: Double = 3.0,
-        attackRate: Double = 0.05,
-        releaseRate: Double = 0.0008
+        ambientHeadroom: Double = 3.0,
+        descentRate: Double = 0.25,
+        ascentRate: Double = 0.02,
+        quietDriftRate: Double = 0.002
     ) {
         self.initialFloor = initialFloor
         self.minimumFloor = minimumFloor
         self.maximumFloor = maximumFloor
         self.multiplier = multiplier
-        self.attackRate = attackRate
-        self.releaseRate = releaseRate
+        self.ambientHeadroom = ambientHeadroom
+        self.descentRate = descentRate
+        self.ascentRate = ascentRate
+        self.quietDriftRate = quietDriftRate
         self.floor = initialFloor
+        self.quietLevel = initialFloor
     }
 
     /// Current RMS gate: adaptive floor scaled by `multiplier`.
@@ -106,12 +125,29 @@ public struct NoiseFloorEstimator: Sendable, Equatable {
     /// Feeds one frame of measured RMS back into the estimator.
     public mutating func update(rms: Double, isSignalPresent: Bool) {
         guard rms.isFinite, rms >= 0 else { return }
-        let rate = isSignalPresent ? releaseRate : attackRate
-        floor += (rms - floor) * rate
+
+        if rms < quietLevel {
+            quietLevel = rms
+        } else {
+            quietLevel += (rms - quietLevel) * quietDriftRate
+        }
+
+        if rms < floor {
+            // The room got quieter (or a note decayed into the noise): follow it down
+            // promptly so quiet playing still registers.
+            floor += (rms - floor) * descentRate
+        } else if !isSignalPresent, rms <= quietLevel * ambientHeadroom {
+            // Steady, near-ambient level: this is the room getting louder.
+            floor += (rms - floor) * ascentRate
+        }
+        // Anything else is a note (or a transient): it must not raise the gate.
+
         floor = min(max(floor, minimumFloor), maximumFloor)
+        quietLevel = min(max(quietLevel, minimumFloor), maximumFloor)
     }
 
     public mutating func reset() {
         floor = initialFloor
+        quietLevel = initialFloor
     }
 }
