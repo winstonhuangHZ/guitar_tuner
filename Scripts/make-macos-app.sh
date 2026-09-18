@@ -41,6 +41,13 @@ cp "$BIN_DIR/GuitarTunerMac" "$APP/Contents/MacOS/GuitarTuner"
 cp "$ROOT/Platforms/macOS/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# App icon (regenerate with: swift Scripts/make-app-icons.swift).
+if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
+  cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+else
+  echo "note: Resources/AppIcon.icns is missing — run 'swift Scripts/make-app-icons.swift'"
+fi
+
 # Ad-hoc signature: enough for a stable TCC identity on the local machine.
 codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "note: ad-hoc codesign skipped"
 

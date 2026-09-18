@@ -10,6 +10,7 @@
 - **频谱视图**：vDSP FFT，对数频率轴，并标出当前基频与泛音——输入滤波器到底做了什么，一眼就能看出来。
 - **调音辅助**：自动/锁定单弦、迟滞判定、A4 参考音高 415–466 Hz、稳定性曲线。
 - **浅色界面**：白底，白天放在谱架上也看得清（界面固定 light，不跟随系统深色）。
+- **应用图标**：按 App 自己的仪表盘设计用代码画出来（蓝底 / 刻度弧 / 指针 / 绿色准音区），macOS `.icns` 与 iOS AppIcon 由同一套脚本生成。
 - **零第三方依赖**。
 
 ## 快速开始
@@ -48,6 +49,25 @@ swift run GuitarTunerChecks
 
 每根弦都带位置标签（例如 `E2 · 6th string`），可以自动匹配，也可以锁定某根弦单独调。频率范围按实际目标频率计算，不依赖排列顺序——尤克里里的 G 弦比 C 弦高，班卓的 5 弦是最高音的 drone 弦，都不会算错。
 
+## App 图标
+
+图标不是一张静态图片，而是由脚本按 App 自己的仪表盘设计画出来的（蓝底、刻度弧、白色指针、绿色准音区）：
+
+```bash
+swift Scripts/make-app-icons.swift    # 重新生成（改颜色/几何后重跑即可）
+swift Scripts/verify-app-icon.swift   # 取样校验：透明留白、指针、准音区、icns 结构、32 px 可读性
+```
+
+生成物：
+
+| 路径 | 用途 |
+| --- | --- |
+| `Resources/AppIcon.icns` | macOS 图标，`Scripts/make-macos-app.sh` 会复制进 `GuitarTuner.app/Contents/Resources/` |
+| `Resources/AppIcon.iconset/` | 中间产物（16–1024 px），方便手动微调或交给设计师 |
+| `Platforms/iOS/Assets.xcassets/AppIcon.appiconset/` | iOS 的 1024 px 图标（不带 alpha，iOS 不接受透明通道） |
+
+两点注意：Dock 里显示图标的前提是从 `.app` 启动——`swift run` 的裸可执行文件没有 bundle，用的是终端的图标；另外 macOS 会缓存图标，换图后如果还是旧的，把 app 挪一下或者 `killall Dock`。
+
 ## iOS
 
 iOS 需要一个 App target，SwiftPM 本身不能产出 iOS 应用包。两种方式：
@@ -80,7 +100,10 @@ Sources/
 Platforms/
   iOS/                       iOS App 入口 + Info.plist + 可选 project.yml
   macOS/                     打包用 Info.plist
+Resources/AppIcon.icns       生成的 macOS 图标（.iconset 为中间产物）
 Scripts/make-macos-app.sh    生成 .app bundle
+Scripts/make-app-icons.swift 生成两端的应用图标
+Scripts/verify-app-icon.swift 图标取样校验
 ```
 
 ## 信号链
