@@ -68,11 +68,21 @@ public final class TunerController {
     public private(set) var history: [HistorySample] = []
     /// FFT display data for the spectrum view (updated at 10 Hz).
     public private(set) var spectrum: SpectrumSnapshot = .empty
+    /// Twelve-bin pitch-class profile, and what it looks like as a chord (10 Hz).
+    public private(set) var chroma: ChromaProfile = .silent
+    public private(set) var chordDetection: ChordDetection = .none
     /// Last target the tuner locked onto; kept so the display does not blank out the
     /// instant the string decays below the gate.
     public private(set) var lastStableTarget: PitchTarget?
     /// Filter + detector settings currently applied to the audio graph.
     public private(set) var activeProfile: AnalysisProfile
+
+    /// The shape the practice mode is listening for.
+    public var practiceTarget: ChordVoicing? {
+        didSet { updateChordEvaluation() }
+    }
+    /// How the current audio compares with `practiceTarget`.
+    public private(set) var chordEvaluation: ChordEvaluation?
 
     // MARK: - User settings
 
@@ -169,6 +179,11 @@ public final class TunerController {
                 self?.spectrum = snapshot
             }
         }
+        pipeline.onChroma = { [weak self] chroma in
+            Task { @MainActor in
+                self?.apply(chroma: chroma)
+            }
+        }
 
         #if canImport(AVFoundation)
         configureBands()
@@ -244,6 +259,9 @@ public final class TunerController {
         apply(reading: .idle)
         history.removeAll(keepingCapacity: true)
         spectrum = .empty
+        chroma = .silent
+        chordDetection = .none
+        chordEvaluation = nil
         hasAudioFrames = false
         audioDiagnostic = nil
         lastStableTarget = nil
@@ -319,6 +337,28 @@ public final class TunerController {
         appendHistoryPoint(cents: newReading.cents, isHeld: newReading.isHeld)
         updateHaptics(isInTune: newReading.isInTune)
     }
+
+    /// A chroma frame arrived: identify the chord and score it against the practice target.
+    private func apply(chroma newChroma: ChromaProfile) {
+        chroma = newChroma
+        chordDetection = newChroma.isSilent ? .none : Self.chordDetector.detect(newChroma)
+        updateChordEvaluation()
+    }
+
+    private func updateChordEvaluation() {
+        guard let target = practiceTarget, !chroma.isSilent else {
+            chordEvaluation = nil
+            return
+        }
+        chordEvaluation = Self.chordEvaluator.evaluate(
+            chroma: chroma,
+            target: target,
+            detection: chordDetection
+        )
+    }
+
+    private static let chordDetector = ChordDetector()
+    private static let chordEvaluator = ChordEvaluator()
 
     private func appendHistoryPoint(cents: Double?, isHeld: Bool) {
         guard let cents, !isHeld else { return }

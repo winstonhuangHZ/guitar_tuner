@@ -14,6 +14,7 @@ final class AnalysisPipeline: @unchecked Sendable {
     private var evaluator: TunerEvaluator
     private var noiseFloor: NoiseFloorEstimator
     private let spectrumAnalyzer = SpectrumAnalyzer()
+    private let chromaAnalyzer = ChromaAnalyzer()
     private var selection: TuningSelection
     private var window: [Float] = []
     private var frameIndex = 0
@@ -25,6 +26,8 @@ final class AnalysisPipeline: @unchecked Sendable {
     var onReading: (@Sendable (TunerReading) -> Void)?
     /// Called on an arbitrary thread for every analysed spectrum frame.
     var onSpectrum: (@Sendable (SpectrumSnapshot) -> Void)?
+    /// Called on an arbitrary thread for every analysed chroma frame.
+    var onChroma: (@Sendable (ChromaProfile) -> Void)?
 
     init(
         ringBuffer: AudioSampleRingBuffer,
@@ -81,6 +84,7 @@ final class AnalysisPipeline: @unchecked Sendable {
             let presetChanged = self.selection.preset.id != selection.preset.id
             let referenceChanged = self.selection.referencePitch != selection.referencePitch
             self.selection = selection
+            self.chromaAnalyzer.referencePitch = selection.referencePitch
             if presetChanged || referenceChanged {
                 self.evaluator.reset()
                 self.stabilizer.reset()
@@ -159,6 +163,9 @@ final class AnalysisPipeline: @unchecked Sendable {
         // well below the detector's.
         if let onSpectrum, frameIndex % 2 == 0 {
             onSpectrum(spectrumAnalyzer.analyze(samples: frame, sampleRate: sampleRate))
+        }
+        if let onChroma, frameIndex % 2 == 1 {
+            onChroma(chromaAnalyzer.analyze(samples: frame, sampleRate: sampleRate))
         }
     }
 

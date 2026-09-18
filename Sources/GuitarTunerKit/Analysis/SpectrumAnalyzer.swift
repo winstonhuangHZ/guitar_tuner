@@ -58,20 +58,7 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
     public let maximumWindowSize: Int
 
     private var levels: [Float] = []
-    private var signal: [Float] = []
-    private var realInput: [Float] = []
-    private var imagInput: [Float] = []
-    private var realOutput: [Float] = []
-    private var imagOutput: [Float] = []
-    private var magnitudes: [Float] = []
-    private var window: [Float] = []
-    #if canImport(Accelerate)
-    /// `vDSP_DFT` is used instead of the `vDSP.FFT` wrapper because a DFT setup takes the
-    /// transform length directly — no guessing about how a split-complex buffer maps onto
-    /// `log2n`.
-    private var dft: vDSP_DFT_Setup?
-    #endif
-    private var preparedSize = 0
+    private let spectral = SpectralTransform()
 
     public init(
         binCount: Int = 96,
@@ -101,90 +88,21 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
 
     public func analyze(samples: [Float], sampleRate: Double) -> SpectrumSnapshot {
         guard sampleRate > 0, samples.count >= 512 else { return .empty }
-        let size = fftSize(for: Swift.min(samples.count, maximumWindowSize))
+        let size = SpectralTransform.preferredSize(
+            for: Swift.min(samples.count, maximumWindowSize),
+            maximum: maximumWindowSize
+        )
         guard size >= 512 else { return .empty }
-        prepare(size: size)
-        fillBuffers(samples: samples, size: size)
-        transform(size: size)
-        return snapshot(size: size, sampleRate: sampleRate)
+        let magnitudes = spectral.transform(samples: samples, requestedSize: size)
+        guard !magnitudes.isEmpty else { return .empty }
+        return snapshot(magnitudes: magnitudes, size: size, sampleRate: sampleRate)
     }
 
     // MARK: - Setup
 
-    private func fftSize(for count: Int) -> Int {
-        var size = 512
-        while size * 2 <= count {
-            size *= 2
-        }
-        return size
-    }
-
-    private func prepare(size: Int) {
-        guard preparedSize != size else { return }
-        preparedSize = size
-        let half = size / 2
-        signal = [Float](repeating: 0, count: size)
-        realInput = [Float](repeating: 0, count: size)
-        imagInput = [Float](repeating: 0, count: size)
-        realOutput = [Float](repeating: 0, count: size)
-        imagOutput = [Float](repeating: 0, count: size)
-        magnitudes = [Float](repeating: 0, count: half)
-        window = (0..<size).map { index in
-            0.5 - 0.5 * cos(2 * Float.pi * Float(index) / Float(size - 1))
-        }
-        #if canImport(Accelerate)
-        if let dft { vDSP_DFT_DestroySetup(dft) }
-        dft = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(size), .FORWARD)
-        #endif
-    }
-
-    private func fillBuffers(samples: [Float], size: Int) {
-        let start = samples.count - size
-        for index in 0..<size {
-            realInput[index] = samples[start + index] * window[index]
-            imagInput[index] = 0
-        }
-    }
-
-    // MARK: - FFT
-
-    private func transform(size: Int) {
-        #if canImport(Accelerate)
-        guard let dft else { return }
-        realInput.withUnsafeMutableBufferPointer { real in
-            imagInput.withUnsafeMutableBufferPointer { imag in
-                realOutput.withUnsafeMutableBufferPointer { outReal in
-                    imagOutput.withUnsafeMutableBufferPointer { outImag in
-                        guard
-                            let realBase = real.baseAddress,
-                            let imagBase = imag.baseAddress,
-                            let outRealBase = outReal.baseAddress,
-                            let outImagBase = outImag.baseAddress
-                        else { return }
-
-                        vDSP_DFT_Execute(dft, realBase, imagBase, outRealBase, outImagBase)
-
-                        magnitudes.withUnsafeMutableBufferPointer { magnitudeBuffer in
-                            guard let magnitudeBase = magnitudeBuffer.baseAddress else { return }
-                            var output = DSPSplitComplex(realp: outRealBase, imagp: outImagBase)
-                            vDSP_zvabs(&output, 1, magnitudeBase, 1, vDSP_Length(size / 2))
-                        }
-                    }
-                }
-            }
-        }
-        #endif
-    }
-
-    deinit {
-        #if canImport(Accelerate)
-        if let dft { vDSP_DFT_DestroySetup(dft) }
-        #endif
-    }
-
     // MARK: - Display mapping
 
-    private func snapshot(size: Int, sampleRate: Double) -> SpectrumSnapshot {
+    private func snapshot(magnitudes: [Float], size: Int, sampleRate: Double) -> SpectrumSnapshot {
         if levels.count != binCount {
             levels = [Float](repeating: 0, count: binCount)
         } else {

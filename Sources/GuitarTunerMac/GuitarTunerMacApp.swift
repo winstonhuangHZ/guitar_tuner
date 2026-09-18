@@ -30,7 +30,7 @@ struct GuitarTunerMacApp: App {
 
     var body: some Scene {
         WindowGroup("Guitar Tuner") {
-            TunerView(controller: controller)
+            AppView(controller: controller)
                 .preferredColorScheme(.light)
         }
         #if os(macOS)
