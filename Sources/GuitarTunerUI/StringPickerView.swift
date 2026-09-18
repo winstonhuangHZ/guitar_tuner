@@ -75,23 +75,27 @@ public struct StringPickerView: View {
                     .font(.system(.headline, design: .rounded))
                 Text(subtitle)
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(isSelected ? Color.black.opacity(0.6) : .secondary)
+                    .foregroundStyle(isSelected ? TunerTheme.onAccent.opacity(0.85) : .secondary)
             }
             .frame(minWidth: 58)
             .padding(.vertical, 8)
             .padding(.horizontal, 10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? TunerTheme.accent : Color.white.opacity(isDetected ? 0.14 : 0.06))
+                    .fill(
+                        isSelected
+                            ? TunerTheme.accent
+                            : (isDetected ? TunerTheme.inTune.opacity(0.12) : TunerTheme.subtleFill)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(
-                        isDetected ? TunerTheme.inTune.opacity(0.9) : Color.white.opacity(0.08),
+                        isDetected ? TunerTheme.inTune.opacity(0.85) : TunerTheme.hairline,
                         lineWidth: isDetected ? 2 : 1
                     )
             )
-            .foregroundStyle(isSelected ? Color.black : Color.primary)
+            .foregroundStyle(isSelected ? TunerTheme.onAccent : Color.primary)
         }
         .buttonStyle(.plain)
         .animation(.easeOut(duration: 0.15), value: isSelected)

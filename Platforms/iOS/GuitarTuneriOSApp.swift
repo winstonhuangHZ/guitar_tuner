@@ -11,7 +11,7 @@ struct GuitarTuneriOSApp: App {
     var body: some Scene {
         WindowGroup {
             TunerView(controller: controller)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
         }
     }
 }

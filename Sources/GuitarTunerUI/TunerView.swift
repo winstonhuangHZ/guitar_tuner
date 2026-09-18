@@ -3,6 +3,8 @@ import SwiftUI
 
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 /// The full tuner screen, shared by the iOS and macOS apps.
@@ -36,6 +38,7 @@ public struct TunerView: View {
                         isSignalPresent: controller.reading.isSignalPresent
                     )
                     .tunerCard()
+                    spectrumCard
                     historyCard
                     StringPickerView(
                         preset: controller.preset,
@@ -99,7 +102,7 @@ public struct TunerView: View {
         case .running: TunerTheme.inTune
         case .requestingPermission: TunerTheme.accent
         case .permissionDenied, .failed: TunerTheme.sharp
-        case .idle: Color.white.opacity(0.4)
+        case .idle: TunerTheme.idle
         }
 
         return HStack(spacing: 6) {
@@ -112,8 +115,9 @@ public struct TunerView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.06), in: Capsule())
+        .background(TunerTheme.surface, in: Capsule())
         .overlay(Capsule().strokeBorder(tone.opacity(0.35), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 2)
     }
 
     private var statusText: String {
@@ -140,7 +144,7 @@ public struct TunerView: View {
         .background(
             RadialGradient(
                 colors: [
-                    TunerTheme.color(for: controller.reading.direction).opacity(controller.reading.isInTune ? 0.20 : 0.08),
+                    TunerTheme.color(for: controller.reading.direction).opacity(controller.reading.isInTune ? 0.16 : 0.05),
                     .clear,
                 ],
                 center: .center,
@@ -155,7 +159,12 @@ public struct TunerView: View {
             Task { await controller.toggle() }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: controller.isRunning ? "stop.fill" : "waveform")
+                if controller.status == .requestingPermission {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: controller.isRunning ? "stop.fill" : "waveform")
+                }
                 Text(controller.isRunning ? "Stop listening" : "Start tuning")
                     .fontWeight(.semibold)
             }
@@ -163,12 +172,18 @@ public struct TunerView: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(controller.isRunning ? Color.white.opacity(0.10) : TunerTheme.accent)
+                    .fill(controller.isRunning ? TunerTheme.surface : TunerTheme.accent)
             )
-            .foregroundStyle(controller.isRunning ? Color.primary : Color.black)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(
+                        controller.isRunning ? TunerTheme.hairline : Color.clear,
+                        lineWidth: 1
+                    )
+            )
+            .foregroundStyle(controller.isRunning ? Color.primary : TunerTheme.onAccent)
         }
         .buttonStyle(.plain)
-        .disabled(controller.status == .requestingPermission)
         .keyboardShortcut(.space, modifiers: [])
     }
 
@@ -189,6 +204,55 @@ public struct TunerView: View {
         .tunerCard()
     }
 
+    private var spectrumCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Spectrum").tunerSectionTitle()
+                Spacer()
+                Text(spectrumDetail)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            SpectrumView(
+                snapshot: controller.spectrum,
+                fundamental: controller.reading.frequency,
+                isActive: controller.isRunning,
+                placeholder: spectrumPlaceholder
+            )
+            HStack(spacing: 12) {
+                Label("fundamental", systemImage: "line.diagonal")
+                    .foregroundStyle(TunerTheme.inTune)
+                Label("harmonics", systemImage: "line.diagonal")
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            .font(.caption2)
+        }
+        .tunerCard()
+    }
+
+    private var spectrumDetail: String {
+        guard let peak = controller.spectrum.peakFrequency else {
+            return "filtered input"
+        }
+        return "strongest partial \(TunerFormat.frequency(peak))"
+    }
+
+    private var spectrumPlaceholder: String {
+        switch controller.status {
+        case .running:
+            controller.hasAudioFrames ? "no signal yet — play a string" : "starting the audio engine…"
+        case .requestingPermission:
+            "waiting for microphone access"
+        case .permissionDenied:
+            "microphone access is off"
+        case .failed:
+            "audio engine stopped"
+        case .idle:
+            "press start to analyse"
+        }
+    }
+
     private var footer: some View {
         VStack(spacing: 4) {
             if controller.sampleRate > 0 {
@@ -202,7 +266,7 @@ public struct TunerView: View {
     }
 
     private var statusMessage: String? {
-        controller.status.message
+        controller.audioDiagnostic ?? controller.status.message
     }
 
     private func statusBanner(_ message: String) -> some View {
@@ -213,25 +277,36 @@ public struct TunerView: View {
                 Text(message)
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
-                if controller.status == .permissionDenied {
-                    #if os(iOS)
-                    Button("Open Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
+                HStack(spacing: 8) {
+                    if controller.status == .permissionDenied {
+                        Button("Open microphone settings") {
+                            openMicrophoneSettings()
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
+                    Button("Try again") {
+                        Task { await controller.start() }
+                    }
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    #else
-                    Text("System Settings → Privacy & Security → Microphone")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    #endif
                 }
             }
             Spacer()
         }
         .tunerCard()
+    }
+
+    private func openMicrophoneSettings() {
+        #if os(iOS)
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+        #elseif os(macOS)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+        #endif
     }
 }
 

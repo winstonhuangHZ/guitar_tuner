@@ -6,7 +6,10 @@
 - **输入模式**：`Microphone`（70 Hz–1 kHz 带通）与 `Pickup`（400 Hz 低通），滤波参数会跟着调弦预设自动放宽，不会把低音弦或尤克里里高音弦滤掉。
 - **音高识别**：NSDF（归一化平方差）+ MPM 峰值挑选的自相关算法，抛物线插值到亚采样精度，对"二次谐波比基频还强"的拾音器信号不会误判成高八度。
 - **抗抖动**：绝对 RMS 门限 + 自适应噪声地板（跟着房间噪声走）+ 中值滤波 + 短时保持。
-- **调音辅助**：自动/锁定单弦、迟滞判定、A4 参考音高 415–466 Hz、常用预设（标准/Drop D/E♭/Open G/Open D/DADGAD/4 弦与 5 弦贝斯/尤克里里/半音阶）。
+- **34 组调音预设 + 半音阶**：Drop D 系列、开放调弦、DADGAD、巴里通、7/8 弦、贝斯、尤克里里、曼陀铃等（见下）。
+- **频谱视图**：vDSP FFT，对数频率轴，并标出当前基频与泛音——输入滤波器到底做了什么，一眼就能看出来。
+- **调音辅助**：自动/锁定单弦、迟滞判定、A4 参考音高 415–466 Hz、稳定性曲线。
+- **浅色界面**：白底，白天放在谱架上也看得清（界面固定 light，不跟随系统深色）。
 - **零第三方依赖**。
 
 ## 快速开始
@@ -24,13 +27,26 @@ swift run GuitarTunerMac
 open build/GuitarTuner.app
 ```
 
-跑 DSP 自检（162 项，覆盖音名/音分换算、预设、门限、检测精度、稳定器、环形缓冲、目标匹配、滤波配置）：
+跑 DSP 自检（419 项，覆盖音名/音分换算、35 组预设、门限、检测精度、稳定器、环形缓冲、目标匹配、滤波配置、FFT 频谱）：
 
 ```bash
 swift run GuitarTunerChecks
 ```
 
 > 为什么不是 `swift test`：XCTest 与 swift-testing 只随**完整 Xcode** 提供，本机目前只有 Command Line Tools（`xcodebuild` 指向 `/Library/Developer/CommandLineTools`），`swift test` 无法编译。所以验证套件写成了可执行的纯 Swift 检查程序，CLT 环境下也能真跑。
+
+## 调音预设
+
+| 分类 | 预设 |
+| --- | --- |
+| 通用 | Chromatic（半音阶，自动跟随最近的十二平均律音） |
+| 吉他（6 弦） | Standard E · Drop D · Double Drop D · Drop C♯ · Drop C · Drop B · Drop A · Open D · Open G · Open E · Open A · Open C · DADGAD · DADDAD · All Fourths · Nashville（high-strung）· E♭ Standard（降半音）· D Standard（降全音）· C Standard · Baritone（B 标准） |
+| 扩展音域 | 7 弦 B Standard · 7 弦 Drop A · 8 弦 F♯ Standard |
+| 贝斯 | 4 弦 · Drop D · 5 弦 · 6 弦 |
+| 尤克里里 | C（re-entrant）· Low G · Baritone（DGBE） |
+| 其他 | Mandolin（GDAE）· 5 弦班卓（Open G）· Lap Steel C6 · Tenor Guitar（CGDA） |
+
+每根弦都带位置标签（例如 `E2 · 6th string`），可以自动匹配，也可以锁定某根弦单独调。频率范围按实际目标频率计算，不依赖排列顺序——尤克里里的 G 弦比 C 弦高，班卓的 5 弦是最高音的 drone 弦，都不会算错。
 
 ## iOS
 
@@ -123,7 +139,7 @@ NSDF(τ) = 2 · Σ x[j]·x[j+τ] / Σ (x[j]² + x[j+τ]²)      ∈ [-1, 1]
 
 ## 精度与验证
 
-`swift run GuitarTunerChecks` 当前 162 项全绿，关键阈值：
+`swift run GuitarTunerChecks` 当前 419 项全绿，关键阈值：
 
 | 检查 | 阈值 |
 | --- | --- |
@@ -134,12 +150,34 @@ NSDF(τ) = 2 · Σ x[j]·x[j+τ] / Σ (x[j]² + x[j+τ]²)      ∈ [-1, 1]
 | 白噪声 / 静音 / 门限以下噪声 | 必须返回无音高 |
 | 门限与自适应噪声地板 | 单调性、边界、回落方向 |
 | 环形缓冲 | 顺序、环绕、跨边界读取 |
+| 频谱 | 峰值频率精度、对数轴映射、显示范围随调弦收紧（贝斯上看得见 B0） |
+| 预设库 | 35 组结构合法性 + 著名调弦逐音核对（Drop C、Open E、DADGAD、Nashville、8 弦 F♯…） |
+
+## 排查
+
+**授权之后一直停在 "waiting"**
+
+启动流程原先会一直 `await` 系统授权回调。macOS 对"归属不到具体 App"的进程（典型是用 `swift run` 直接跑的裸可执行文件）可能永远不回调，界面就卡在等待授权。现在的处理：
+
+1. 授权请求改成轮询 + 8 秒超时：用户一点"允许"，约 200 ms 内就继续；即使超时也不会把 UI 卡住。
+2. 不再用授权状态阻断启动：只要不是明确的 `.denied`，就直接尝试启动音频引擎，由引擎给出真实结论。
+3. 引擎已运行但 2.5 秒内一帧数据都没到，会显示提示并说明原因（多半就是上面那个归属问题）。
+4. 出错横幅带 **Try again** 和 **Open microphone settings**（macOS 会直接跳到"隐私与安全性 → 麦克风"）。
+
+最省事的做法仍然是打成 App bundle，让 macOS 用 "Guitar Tuner" 自己的身份弹授权：
+
+```bash
+./Scripts/make-macos-app.sh && open build/GuitarTuner.app
+```
+
+**一点声音都没有**：确认系统输入设备选的是你要用的那个麦克风；电平条上的白色竖线是当前 RMS 门限，信号不越过它就不会参与识别（把琴靠近麦克风，或让环境安静一些）。
 
 ## 已知限制
 
 - 只在 macOS 上编译与运行验证过。iOS 目标本机没有 Xcode 与 iOS SDK，无法编译，也无法在真机验证麦克风链路——`Platforms/iOS` 下的代码用的是标准 API（`AVAudioSession(.record, .measurement)`、`AVAudioApplication.requestRecordPermission`），但请以真机结果为准。
 - 单音识别：同时拨多根弦（和弦）时不适用，需要 FFT/多基频估计。
 - 没有录音、没有联网，音频只在内存里分析。
+- 界面固定浅色，不跟随系统深色外观。
 
 ## 受限环境下构建
 

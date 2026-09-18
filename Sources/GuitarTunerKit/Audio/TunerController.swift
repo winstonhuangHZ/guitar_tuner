@@ -60,8 +60,14 @@ public final class TunerController {
     public private(set) var status: Status = .idle
     public private(set) var reading: TunerReading = .idle
     public private(set) var permission: MicrophonePermissionStatus = .undetermined
+    /// True once the analysis loop has delivered frames since the last start.
+    public private(set) var hasAudioFrames = false
+    /// Set when the engine runs but nothing ever arrives, with a hint about why.
+    public private(set) var audioDiagnostic: String?
     public private(set) var sampleRate: Double = 0
     public private(set) var history: [HistorySample] = []
+    /// FFT display data for the spectrum view (updated at 10 Hz).
+    public private(set) var spectrum: SpectrumSnapshot = .empty
     /// Last target the tuner locked onto; kept so the display does not blank out the
     /// instant the string decays below the gate.
     public private(set) var lastStableTarget: PitchTarget?
@@ -145,6 +151,7 @@ public final class TunerController {
     private var isTapInstalled = false
     private var nextHistoryID = 0
     private var wasInTune = false
+    private var watchdogTask: Task<Void, Never>?
 
     public init() {
         let selection = TuningSelection.default
@@ -155,6 +162,11 @@ public final class TunerController {
         pipeline.onReading = { [weak self] reading in
             Task { @MainActor in
                 self?.apply(reading: reading)
+            }
+        }
+        pipeline.onSpectrum = { [weak self] snapshot in
+            Task { @MainActor in
+                self?.spectrum = snapshot
             }
         }
 
@@ -170,6 +182,8 @@ public final class TunerController {
             }
         }
         #endif
+
+        updateSpectrumRange()
     }
 
     public var isRunning: Bool { status.isRunning }
@@ -191,20 +205,30 @@ public final class TunerController {
     }
 
     public func start() async {
-        guard !isRunning else { return }
+        // Nothing to do while a start (including its permission request) is already in
+        // flight — the request now has a deadline, so this cannot hang for long.
+        guard !isRunning, status != .requestingPermission else { return }
         status = .requestingPermission
+        hasAudioFrames = false
+        audioDiagnostic = nil
 
         let permission = await MicrophonePermission.request()
         self.permission = permission
-        guard permission == .granted else {
+
+        if permission == .denied {
             status = .permissionDenied
             return
         }
 
+        // Granted — or still undetermined after the permission request timed out. In the
+        // second case the capture attempt itself is the source of truth: if access is
+        // really blocked the engine reports it, and if it is not, the user gets a working
+        // tuner instead of a UI stuck on "waiting".
         do {
             try startEngine()
             pipeline.start()
             status = .running
+            startAudioWatchdog()
         } catch {
             stopEngine()
             status = .failed(error.localizedDescription)
@@ -212,13 +236,33 @@ public final class TunerController {
     }
 
     public func stop() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
         pipeline.stop()
         stopEngine()
         status = .idle
         apply(reading: .idle)
         history.removeAll(keepingCapacity: true)
+        spectrum = .empty
+        hasAudioFrames = false
+        audioDiagnostic = nil
         lastStableTarget = nil
         wasInTune = false
+    }
+
+    /// A running engine that never produces a frame is the one failure the audio stack
+    /// does not report by itself, so it gets its own deadline and message.
+    private func startAudioWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard let self, !Task.isCancelled, self.isRunning, !self.hasAudioFrames else { return }
+            self.audioDiagnostic = """
+                The engine is running but no audio is arriving. If you launched the bare \
+                executable, macOS attributes the microphone to your terminal — build the \
+                app bundle with Scripts/make-macos-app.sh and open it from there.
+                """
+        }
     }
 
     // MARK: - Settings plumbing
@@ -247,12 +291,28 @@ public final class TunerController {
         configureBands()
         #endif
         pipeline.update(selection: storedSelection, profile: profile)
+        updateSpectrumRange()
+    }
+
+    /// The spectrum axis follows the tuning: low enough for the lowest string, high
+    /// enough to show its first few harmonics.
+    private func updateSpectrumRange() {
+        let presetRange = storedSelection.preset.frequencyRange(referencePitch: storedSelection.referencePitch)
+        let lowest = presetRange?.lowerBound ?? 55
+        let highest = presetRange?.upperBound ?? 1400
+        let minFrequency = max(AnalysisProfile.absoluteMinFrequency, lowest * 0.55)
+        let maxFrequency = min(8000, max(4000, highest * 5))
+        pipeline.updateSpectrumFrequencyRange(min: minFrequency, max: maxFrequency)
     }
 
     // MARK: - Readings
 
     private func apply(reading newReading: TunerReading) {
         reading = newReading
+        if isRunning {
+            hasAudioFrames = true
+            audioDiagnostic = nil
+        }
         if let target = newReading.target {
             lastStableTarget = target
         }

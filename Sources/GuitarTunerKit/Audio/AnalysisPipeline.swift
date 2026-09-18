@@ -13,14 +13,18 @@ final class AnalysisPipeline: @unchecked Sendable {
     private var stabilizer: PitchStabilizer
     private var evaluator: TunerEvaluator
     private var noiseFloor: NoiseFloorEstimator
+    private let spectrumAnalyzer = SpectrumAnalyzer()
     private var selection: TuningSelection
     private var window: [Float] = []
+    private var frameIndex = 0
 
     private var timer: DispatchSourceTimer?
     private var isRunning = false
 
     /// Called on an arbitrary thread for every finished frame.
     var onReading: (@Sendable (TunerReading) -> Void)?
+    /// Called on an arbitrary thread for every analysed spectrum frame.
+    var onSpectrum: (@Sendable (SpectrumSnapshot) -> Void)?
 
     init(
         ringBuffer: AudioSampleRingBuffer,
@@ -84,6 +88,13 @@ final class AnalysisPipeline: @unchecked Sendable {
         }
     }
 
+    /// Keeps the spectrum display centred on the band that matters for this tuning.
+    func updateSpectrumFrequencyRange(min: Double, max: Double) {
+        queue.async { [weak self] in
+            self?.spectrumAnalyzer.setFrequencyRange(min: min, max: max)
+        }
+    }
+
     func reset() {
         queue.async { [weak self] in
             self?.resetLocked()
@@ -110,7 +121,8 @@ final class AnalysisPipeline: @unchecked Sendable {
         let available = ringBuffer.availableSampleCount
         guard sampleRate > 0, available > 0 else { return }
 
-        let requested = min(max(detector.configuration.analysisWindowSize, 1024), available)
+        updateAnalysisWindow(sampleRate: sampleRate)
+        let requested = min(max(detector.configuration.analysisWindowSize, spectrumAnalyzer.windowSize), available)
         let count = ringBuffer.latest(count: requested, into: &window)
         guard count >= detector.configuration.minimumSampleCount else { return }
 
@@ -122,5 +134,24 @@ final class AnalysisPipeline: @unchecked Sendable {
         let stabilized = stabilizer.process(analysis, at: now)
         let reading = evaluator.evaluate(stabilized, selection: selection, timestamp: now)
         onReading?(reading)
+
+        // The spectrum is a display element: 10 Hz is plenty and keeps the FFT cost
+        // well below the detector's.
+        frameIndex += 1
+        if let onSpectrum, frameIndex % 2 == 0 {
+            onSpectrum(spectrumAnalyzer.analyze(samples: frame, sampleRate: sampleRate))
+        }
+    }
+
+    /// Low tunings need a longer window to see enough periods: 8-string F♯1 (23 Hz) has a
+    /// 43 ms period, so four periods already need ~170 ms — twice the default 4096-sample
+    /// window at 48 kHz. The window grows with the tuning and stays where it is otherwise.
+    private func updateAnalysisWindow(sampleRate: Double) {
+        let minFrequency = max(detector.configuration.minFrequency, 1)
+        let needed = Int(4 * sampleRate / minFrequency)
+        let target = min(max(PitchDetectionConfiguration.default.analysisWindowSize, needed), 16384)
+        if detector.configuration.analysisWindowSize != target {
+            detector.configuration.analysisWindowSize = target
+        }
     }
 }

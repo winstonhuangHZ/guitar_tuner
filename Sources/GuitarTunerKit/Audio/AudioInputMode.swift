@@ -85,8 +85,9 @@ public struct AnalysisProfile: Sendable, Equatable {
         self.maxFrequency = maxFrequency
     }
 
-    /// Lowest fundamental the detector has to cover.
-    public static let absoluteMinFrequency = 25.0
+    /// Lowest fundamental the detector has to cover. An 8-string in F♯ standard sits at
+    /// 23 Hz, and the window sizing in the pipeline follows this down.
+    public static let absoluteMinFrequency = 20.0
     /// Highest fundamental the detector will report.
     public static let absoluteMaxFrequency = 1600.0
 

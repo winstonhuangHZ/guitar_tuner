@@ -1,17 +1,40 @@
 import GuitarTunerKit
 import SwiftUI
 
-/// Colours and shared styling for the tuner UI.
+/// Light palette.
+///
+/// A tuner gets used on a music stand in daylight, so the page is white and every accent
+/// is a saturated colour that stays legible on it. Views never hard-code `Color.white`
+/// for chrome — they use the semantic tokens below, which keeps a future dark appearance
+/// a one-file change.
 public enum TunerTheme {
+    // MARK: Accents
+
     /// Too low.
-    public static let flat = Color(red: 0.36, green: 0.71, blue: 1.00)
+    public static let flat = Color(red: 0.11, green: 0.44, blue: 0.90)
     /// Too high.
-    public static let sharp = Color(red: 1.00, green: 0.58, blue: 0.28)
+    public static let sharp = Color(red: 0.87, green: 0.34, blue: 0.05)
     /// In tune.
-    public static let inTune = Color(red: 0.29, green: 0.87, blue: 0.55)
+    public static let inTune = Color(red: 0.04, green: 0.60, blue: 0.34)
     /// No signal.
-    public static let idle = Color.white.opacity(0.55)
-    public static let accent = Color(red: 0.42, green: 0.78, blue: 1.00)
+    public static let idle = Color(white: 0.62)
+    public static let accent = Color(red: 0.09, green: 0.44, blue: 0.90)
+
+    // MARK: Surfaces
+
+    /// Page background: white with the faintest grey so white cards still read as cards.
+    public static let canvas = Color(red: 0.972, green: 0.975, blue: 0.980)
+    public static let surface = Color.white
+    /// Unfilled meter / gauge track.
+    public static let track = Color.black.opacity(0.07)
+    /// Card and control outlines.
+    public static let hairline = Color.black.opacity(0.10)
+    /// Inset areas (spectrum, history, chips).
+    public static let subtleFill = Color.black.opacity(0.035)
+    /// Text on top of `accent`.
+    public static let onAccent = Color.white
+    /// Text and marks drawn directly on the page.
+    public static let onCanvas = Color.black
 
     public static func color(for direction: TunerReading.Direction) -> Color {
         switch direction {
@@ -24,16 +47,7 @@ public enum TunerTheme {
 
     @ViewBuilder
     public static var background: some View {
-        ZStack {
-            Color(red: 0.043, green: 0.051, blue: 0.075)
-            RadialGradient(
-                colors: [accent.opacity(0.20), accent.opacity(0.04), .clear],
-                center: .init(x: 0.5, y: 0.12),
-                startRadius: 8,
-                endRadius: 620
-            )
-        }
-        .ignoresSafeArea()
+        canvas.ignoresSafeArea()
     }
 }
 
@@ -63,11 +77,15 @@ public extension View {
     func tunerCard(padding: CGFloat = 16) -> some View {
         self
             .padding(padding)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(TunerTheme.surface)
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(TunerTheme.hairline, lineWidth: 1)
             )
+            .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 6)
     }
 
     func tunerSectionTitle() -> some View {
@@ -76,5 +94,13 @@ public extension View {
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
             .kerning(0.6)
+    }
+
+    /// Inset panel used inside a card (spectrum, history, chips).
+    func tunerInset(cornerRadius: CGFloat = 12) -> some View {
+        background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(TunerTheme.subtleFill)
+        )
     }
 }

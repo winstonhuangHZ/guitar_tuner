@@ -68,7 +68,7 @@ public struct TunerGaugeView: View {
         let track = arcPath(center: center, radius: radius, from: startAngle, to: endAngle)
         context.stroke(
             track,
-            with: .color(Color.white.opacity(0.09)),
+            with: .color(TunerTheme.track),
             style: StrokeStyle(lineWidth: radius * 0.075, lineCap: .round)
         )
 
@@ -81,7 +81,7 @@ public struct TunerGaugeView: View {
         )
         context.stroke(
             zone,
-            with: .color(TunerTheme.inTune.opacity(direction == .inTune ? 0.95 : 0.42)),
+            with: .color(TunerTheme.inTune.opacity(direction == .inTune ? 0.95 : 0.30)),
             style: StrokeStyle(lineWidth: radius * 0.075, lineCap: .butt)
         )
 
@@ -100,7 +100,7 @@ public struct TunerGaugeView: View {
             tick.addLine(to: outer)
             context.stroke(
                 tick,
-                with: .color(Color.white.opacity(isMajor ? 0.55 : 0.25)),
+                with: .color(Color.black.opacity(isMajor ? 0.42 : 0.15)),
                 style: StrokeStyle(lineWidth: isMajor ? 2 : 1, lineCap: .round)
             )
 
@@ -108,7 +108,7 @@ public struct TunerGaugeView: View {
                 let labelPoint = point(angle: tickAngle, radius: radius - radius * 0.235, center: center)
                 let label = Text("\(abs(step))")
                     .font(.system(size: max(9, radius * 0.075), weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(step == 0 ? 0.75 : 0.35))
+                    .foregroundStyle(Color.black.opacity(step == 0 ? 0.70 : 0.32))
                 context.draw(label, at: labelPoint, anchor: .center)
             }
         }
@@ -148,7 +148,7 @@ public struct TunerGaugeView: View {
         return VStack(spacing: radius * 0.02) {
             Text(noteName)
                 .font(.system(size: radius * 0.46, weight: .semibold, design: .rounded))
-                .foregroundStyle(hasSignal ? Color.white : Color.white.opacity(0.35))
+                .foregroundStyle(hasSignal ? Color.primary : Color.black.opacity(0.22))
                 .contentTransition(.numericText())
                 .monospacedDigit()
 
@@ -159,7 +159,7 @@ public struct TunerGaugeView: View {
 
             Text(TunerFormat.cents(hasSignal ? reading.cents : nil))
                 .font(.system(size: radius * 0.115, weight: .semibold, design: .rounded))
-                .foregroundStyle(hasSignal ? tone : Color.white.opacity(0.3))
+                .foregroundStyle(hasSignal ? tone : Color.black.opacity(0.2))
                 .monospacedDigit()
                 .contentTransition(.numericText())
 

@@ -43,7 +43,7 @@ public struct LevelMeterView: View {
                 let width = proxy.size.width
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.08))
+                        .fill(TunerTheme.track)
 
                     Capsule()
                         .fill(
@@ -58,7 +58,7 @@ public struct LevelMeterView: View {
 
                     // RMS gate marker.
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.white.opacity(0.7))
+                        .fill(Color.black.opacity(0.5))
                         .frame(width: 2, height: 16)
                         .offset(x: gatePosition * width - 1)
                 }

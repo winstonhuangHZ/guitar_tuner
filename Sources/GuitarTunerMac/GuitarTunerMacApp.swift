@@ -31,6 +31,7 @@ struct GuitarTunerMacApp: App {
     var body: some Scene {
         WindowGroup("Guitar Tuner") {
             TunerView(controller: controller)
+                .preferredColorScheme(.light)
         }
         #if os(macOS)
         .defaultSize(width: 520, height: 900)

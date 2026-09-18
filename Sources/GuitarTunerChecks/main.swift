@@ -10,5 +10,6 @@ runPitchStabilizerChecks(runner)
 runRingBufferChecks(runner)
 runTunerEvaluatorChecks(runner)
 runAnalysisProfileChecks(runner)
+runSpectrumChecks(runner)
 
 exit(runner.report() ? 0 : 1)

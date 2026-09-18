@@ -30,7 +30,7 @@ public struct TuningHistoryView: View {
             var axis = Path()
             axis.move(to: CGPoint(x: 0, y: midY))
             axis.addLine(to: CGPoint(x: size.width, y: midY))
-            context.stroke(axis, with: .color(Color.white.opacity(0.18)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            context.stroke(axis, with: .color(Color.black.opacity(0.15)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
             guard samples.count > 1 else { return }
 
@@ -66,6 +66,6 @@ public struct TuningHistoryView: View {
             context.fill(marker, with: .color(tone))
         }
         .frame(height: 64)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .tunerInset()
     }
 }
