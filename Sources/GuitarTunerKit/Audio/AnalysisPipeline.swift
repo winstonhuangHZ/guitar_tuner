@@ -59,6 +59,7 @@ final class AnalysisPipeline: @unchecked Sendable {
             }
             self.timer = timer
             timer.resume()
+            TunerLog.trace("analysis loop started (\(Int(1 / interval)) Hz)")
         }
     }
 
@@ -131,13 +132,21 @@ final class AnalysisPipeline: @unchecked Sendable {
         let analysis = detector.analyze(samples: frame, sampleRate: sampleRate, gate: noiseFloor.gate)
         noiseFloor.update(rms: analysis.rms, isSignalPresent: analysis.frequency != nil)
 
+        frameIndex += 1
+        if frameIndex == 1 || frameIndex % 100 == 0 {
+            TunerLog.trace(
+                "frame \(frameIndex): \(count) samples, rms \(String(format: "%.4f", analysis.rms))"
+                    + ", clarity \(String(format: "%.2f", analysis.clarity))"
+                    + ", pitch \(analysis.frequency.map { String(format: "%.1f Hz", $0) } ?? "—")"
+            )
+        }
+
         let stabilized = stabilizer.process(analysis, at: now)
         let reading = evaluator.evaluate(stabilized, selection: selection, timestamp: now)
         onReading?(reading)
 
         // The spectrum is a display element: 10 Hz is plenty and keeps the FFT cost
         // well below the detector's.
-        frameIndex += 1
         if let onSpectrum, frameIndex % 2 == 0 {
             onSpectrum(spectrumAnalyzer.analyze(samples: frame, sampleRate: sampleRate))
         }

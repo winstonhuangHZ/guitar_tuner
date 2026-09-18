@@ -178,6 +178,36 @@ NSDF(τ) = 2 · Σ x[j]·x[j+τ] / Σ (x[j]² + x[j+τ]²)      ∈ [-1, 1]
 
 ## 排查
 
+**同意麦克风权限后立刻闪退（每次打开都闪退）**
+
+崩溃报告里是这么一行：
+
+```
+closure #1 in TunerController.startEngine()   ← 麦克风 tap 回调
+swift_task_isCurrentExecutorWithFlagsImpl -> dispatch_assert_queue_fail
+EXC_BAD_INSTRUCTION (SIGILL)
+```
+
+原因：在 `@MainActor` 方法里写的闭包，如果传给的是**没有标 `@Sendable` 的 Objective-C block 类型**，就会继承主 actor 隔离；`AVAudioNodeTapBlock` / `AVAudioSourceNodeRenderBlock` 恰好都没标。AVFAudio 在实时线程上调用它时，Swift 6 运行时的主 actor 断言直接 trap。这也是之前一直卡在 "waiting" 时没有暴露出来的原因——引擎压根没启动到那一步。
+
+修法是把这类闭包放到 `nonisolated` 函数里创建（`TunerController.makeTapHandler`）。这条约束现在有守卫脚本，改完音频图跑一下就能发现回归：
+
+```bash
+swift build && ./Scripts/verify-audio-callbacks.sh
+```
+
+它会反汇编产物，确认所有接收 `AVAudioPCMBuffer` 的回调里都不含主 actor 断言（修复前 tap 的 partial apply thunk 里就有）。
+
+顺带一提：重新构建会改变 ad-hoc 签名，macOS 的麦克风授权是按签名记录的。如果更新后第一次运行拿不到音频，去「系统设置 → 隐私与安全性 → 麦克风」把 Guitar Tuner 的开关关掉再打开；实在不行用 `tccutil reset Microphone com.example.guitartuner` 清掉这条记录重新授权。
+
+想确认音频到底有没有进来，可以用 trace 模式启动：
+
+```bash
+GUITAR_TUNER_TRACE=/tmp/tuner.log open -a build/GuitarTuner.app
+```
+
+日志里会写明权限状态、引擎采样率、以及分析循环每 100 帧的 RMS / 清晰度 / 测到的频率。
+
 **授权之后一直停在 "waiting"**
 
 启动流程原先会一直 `await` 系统授权回调。macOS 对"归属不到具体 App"的进程（典型是用 `swift run` 直接跑的裸可执行文件）可能永远不回调，界面就卡在等待授权。现在的处理：

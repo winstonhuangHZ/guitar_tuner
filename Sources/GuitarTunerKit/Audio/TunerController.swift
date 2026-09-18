@@ -175,12 +175,9 @@ public final class TunerController {
         observerToken.value = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.handleConfigurationChange()
-            }
-        }
+            queue: .main,
+            using: Self.makeConfigurationChangeHandler(self)
+        )
         #endif
 
         updateSpectrumRange()
@@ -214,6 +211,7 @@ public final class TunerController {
 
         let permission = await MicrophonePermission.request()
         self.permission = permission
+        TunerLog.trace("microphone permission: \(permission)")
 
         if permission == .denied {
             status = .permissionDenied
@@ -229,9 +227,11 @@ public final class TunerController {
             pipeline.start()
             status = .running
             startAudioWatchdog()
+            TunerLog.trace("engine running at \(sampleRate) Hz, \(activeProfile.minFrequency)–\(activeProfile.maxFrequency) Hz search range")
         } catch {
             stopEngine()
             status = .failed(error.localizedDescription)
+            TunerLog.trace("engine failed: \(error.localizedDescription)")
         }
     }
 
@@ -341,6 +341,35 @@ public final class TunerController {
     // MARK: - Audio graph
 
     #if canImport(AVFoundation)
+    /// Creates the audio tap closure *outside* the main actor.
+    ///
+    /// This is not cosmetic. A closure literal written inside a `@MainActor` method
+    /// inherits that isolation whenever the API's parameter type is not `@Sendable` —
+    /// which is the case for `AVAudioNodeTapBlock` in the current SDK. AVFAudio calls the
+    /// tap on its own realtime messenger thread, so the Swift runtime's actor-isolation
+    /// check traps (`dispatch_assert_queue_fail` → SIGILL) the first time a buffer
+    /// arrives, and the app dies the moment the microphone starts delivering audio.
+    /// Building the closure in a `nonisolated` function keeps it unisolated.
+    private nonisolated static func makeTapHandler(
+        _ ringBuffer: AudioSampleRingBuffer
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            ringBuffer.append(buffer)
+        }
+    }
+
+    /// Same reasoning as `makeTapHandler`: build the observer closure outside the main
+    /// actor and hop back with an explicit `Task { @MainActor in … }`.
+    private nonisolated static func makeConfigurationChangeHandler(
+        _ controller: TunerController
+    ) -> @Sendable (Notification) -> Void {
+        { _ in
+            Task { @MainActor in
+                controller.handleConfigurationChange()
+            }
+        }
+    }
+
     private func startEngine() throws {
         #if os(iOS)
         try activateAudioSession()
@@ -368,10 +397,12 @@ public final class TunerController {
         // Analysis only: the microphone is never monitored, so there is no feedback path.
         engine.mainMixerNode.outputVolume = 0
 
-        let ring = ringBuffer
-        eqNode.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
-            ring.append(buffer)
-        }
+        eqNode.installTap(
+            onBus: 0,
+            bufferSize: 2048,
+            format: format,
+            block: Self.makeTapHandler(ringBuffer)
+        )
         isTapInstalled = true
 
         engine.prepare()
