@@ -27,6 +27,13 @@ public struct MetronomeView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .task {
+            // The metronome plays through the same graph as the tuner, so make sure it is
+            // up before the first click is due.
+            if !controller.isRunning {
+                await controller.start()
+            }
+        }
     }
 
     private var header: some View {

@@ -156,6 +156,26 @@ public struct ChordPracticeView: View {
                     stringVerdicts: verdicts(for: voicing)
                 )
 
+                HStack(spacing: 10) {
+                    Button {
+                        controller.playPracticeChord()
+                    } label: {
+                        Label("Hear this chord", systemImage: "speaker.wave.2.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Button {
+                        controller.playReferenceTone(stringIndex: voicing.frets.firstIndex { $0 != nil } ?? 0)
+                    } label: {
+                        Label("Lowest note", systemImage: "music.note")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Spacer()
+                }
+
                 HStack(spacing: 14) {
                     legendDot(TunerTheme.inTune, "sounds")
                     legendDot(TunerTheme.sharp, "quiet or missing")

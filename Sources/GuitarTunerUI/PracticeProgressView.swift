@@ -26,6 +26,9 @@ public struct PracticeProgressView: View {
             }
         }
         .task {
+            if !controller.isRunning {
+                await controller.start()
+            }
             controller.refreshHistorySummary()
         }
     }

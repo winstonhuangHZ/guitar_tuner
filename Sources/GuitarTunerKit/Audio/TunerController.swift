@@ -501,7 +501,35 @@ public final class TunerController {
         try activateAudioSession()
         #endif
 
+        do {
+            try buildAndStartEngine()
+        } catch {
+            // A capture device that cannot be opened must not take the whole app down —
+            // fall back to the system default once and try again.
+            TunerLog.trace("engine failed to start: \(error.localizedDescription)")
+            guard selectedInputDeviceID != nil else {
+                throw TunerError.engineFailed(error.localizedDescription)
+            }
+            TunerLog.trace("retrying with the system default input device")
+            selectedInputDeviceID = nil
+            tunerSettings.inputDeviceID = nil
+            scheduleSettingsSave()
+            do {
+                try buildAndStartEngine()
+            } catch {
+                throw TunerError.engineFailed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Builds the graph and starts it. Everything above is policy; this is the mechanics.
+    private func buildAndStartEngine() throws {
         tearDownGraph()
+
+        // Apply the chosen capture device *before* any format is read or any connection is
+        // made. Changing the HAL device invalidates formats that are already bound to the
+        // graph, which silently kills the input — or makes `engine.start()` fail.
+        applyInputDevice()
 
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
@@ -528,8 +556,11 @@ public final class TunerController {
         // reference tones can play at full volume without ever monitoring the input.
         analysisMixer.outputVolume = 0
         engine.mainMixerNode.outputVolume = 1
-        playback.attach(to: engine, sampleRate: engine.mainMixerNode.outputFormat(forBus: 0).sampleRate)
-        applyInputDevice()
+
+        // `prepare()` before attaching the player: until the graph is prepared the mixer
+        // can report a 0 Hz output format, and the player was silently skipped.
+        engine.prepare()
+        playback.attach(to: engine, sampleRate: outputSampleRate)
 
         eqNode.installTap(
             onBus: 0,
@@ -539,12 +570,8 @@ public final class TunerController {
         )
         isTapInstalled = true
 
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            throw TunerError.engineFailed(error.localizedDescription)
-        }
+        try engine.start()
+        TunerLog.trace("engine started: input \(format.sampleRate) Hz \(format.channelCount) ch, output \(outputSampleRate) Hz")
     }
 
     private func stopEngine() {

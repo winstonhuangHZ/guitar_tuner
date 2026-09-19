@@ -53,9 +53,13 @@ final class PlaybackEngine {
     #if canImport(AVFoundation)
     /// Attaches the player node and renders the click sounds.
     func attach(to engine: AVAudioEngine, sampleRate: Double) {
-        guard sampleRate > 0, let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
-            return
-        }
+        // Prefer the rate we were handed, then the output hardware, then a sane default.
+        // Returning early on 0 Hz is what silenced playback: before the graph is prepared
+        // the mixer can still report no format at all.
+        let rate = [sampleRate, engine.outputNode.outputFormat(forBus: 0).sampleRate, 48_000]
+            .first { $0 > 0 } ?? 48_000
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1) else { return }
+        TunerLog.trace("playback attached at \(rate) Hz")
         if player.engine == nil {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)

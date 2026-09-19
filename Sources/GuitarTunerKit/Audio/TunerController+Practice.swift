@@ -38,9 +38,14 @@ public extension TunerController {
         // Synthesising a couple of seconds of audio is fast but not free; keep it off the
         // main actor so the UI does not hitch when a button is tapped.
         Task { [weak self] in
+            guard let self else { return }
+            // The player node only exists once the engine has been built, so starting a
+            // tone has to bring the engine up first — otherwise the tap on "play" would
+            // silently do nothing.
+            if !self.isRunning { await self.start() }
+            guard self.isRunning else { return }
             let samples = await Self.synthesizeTone(frequency: frequency, sampleRate: rate)
-            guard !samples.isEmpty, let self else { return }
-            self.ensureEngineForPlayback()
+            guard !samples.isEmpty else { return }
             self.playback.playTone(samples)
         }
     }
@@ -56,9 +61,11 @@ public extension TunerController {
         )
         let rate = outputSampleRate
         Task { [weak self] in
+            guard let self else { return }
+            if !self.isRunning { await self.start() }
+            guard self.isRunning else { return }
             let samples = await Self.synthesizeChord(frequencies: frequencies, sampleRate: rate)
-            guard !samples.isEmpty, let self else { return }
-            self.ensureEngineForPlayback()
+            guard !samples.isEmpty else { return }
             self.playback.playTone(samples)
         }
     }
@@ -79,9 +86,11 @@ public extension TunerController {
         }
 
         Task { [weak self] in
+            guard let self else { return }
+            if !self.isRunning { await self.start() }
+            guard self.isRunning else { return }
             let samples = await Self.synthesizeProgression(steps: steps, sampleRate: rate)
-            guard !samples.isEmpty, let self else { return }
-            self.ensureEngineForPlayback()
+            guard !samples.isEmpty else { return }
             self.playback.playTone(samples)
         }
     }
@@ -128,10 +137,19 @@ public extension TunerController {
     // MARK: - Metronome
 
     func toggleMetronome() {
-        isMetronomeRunning ? stopMetronome() : startMetronome()
+        if isMetronomeRunning {
+            stopMetronome()
+        } else {
+            Task { await startMetronomeWhenReady() }
+        }
     }
 
-    func startMetronome() {
+    /// Brings the engine up first: the metronome plays through the same graph, and without
+    /// it there is no player node to schedule clicks on.
+    func startMetronomeWhenReady() async {
+        if !isRunning { await start() }
+        guard isRunning else { return }
+
         tunerSettings.metronomePatternID = metronomePattern.id
         tunerSettings.metronomeTempo = metronomeTempo
         tunerSettings.metronomeAccentsEnabled = metronomeAccentsEnabled
@@ -207,12 +225,14 @@ public extension TunerController {
 
     /// Starts listening for the progression, with the metronome keeping time.
     func startProgression() {
-        trainer.reset()
-        progressionUpdate = nil
-        isProgressionRunning = true
-        setMetronomeTempo(progression.defaultTempo)
-        if !isMetronomeRunning {
-            startMetronome()
+        Task {
+            trainer.reset()
+            progressionUpdate = nil
+            isProgressionRunning = true
+            setMetronomeTempo(progression.defaultTempo)
+            if !isMetronomeRunning {
+                await startMetronomeWhenReady()
+            }
         }
     }
 
@@ -242,8 +262,10 @@ public extension TunerController {
 
     func refreshInputDevices() {
         availableInputDevices = AudioInputDevices.available()
-        if selectedInputDeviceID == nil || !availableInputDevices.contains(where: { $0.id == selectedInputDeviceID }) {
-            selectedInputDeviceID = AudioInputDevices.currentDeviceID ?? availableInputDevices.first?.id
+        // Deliberately does not adopt the current device: `nil` means "let the system
+        // decide", and only an explicit choice is pushed onto the audio unit.
+        if let id = selectedInputDeviceID, !availableInputDevices.contains(where: { $0.id == id }) {
+            selectedInputDeviceID = nil
         }
     }
 
