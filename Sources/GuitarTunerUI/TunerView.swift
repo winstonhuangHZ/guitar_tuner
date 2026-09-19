@@ -88,9 +88,15 @@ public struct TunerView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Guitar Tuner")
                     .font(.system(.title2, design: .rounded).weight(.semibold))
-                Text("\(controller.inputMode.displayName) mode")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(controller.inputMode.displayName) mode")
+                    if controller.capoFret > 0 {
+                        Text("· capo \(controller.capoFret)")
+                            .foregroundStyle(TunerTheme.accent)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
             statusPill

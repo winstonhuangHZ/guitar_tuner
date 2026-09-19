@@ -79,10 +79,35 @@ public final class TunerController {
 
     /// The shape the practice mode is listening for.
     public var practiceTarget: ChordVoicing? {
-        didSet { updateChordEvaluation() }
+        didSet {
+            updateChordEvaluation()
+            tunerSettings.practiceVoicingID = practiceTarget?.id
+            scheduleSettingsSave()
+        }
     }
     /// How the current audio compares with `practiceTarget`.
     public private(set) var chordEvaluation: ChordEvaluation?
+
+    // MARK: Metronome, progression and history
+
+    // Read-only from outside the module, but the practice/settings extensions write them.
+    public internal(set) var isMetronomeRunning = false
+    public internal(set) var metronomePattern: MetronomePattern = .commonTime
+    public internal(set) var metronomeTempo: Double = 90
+    public internal(set) var metronomeAccentsEnabled = true
+    public internal(set) var metronomeVolume: Double = 0.7
+    /// Most recently scheduled click, for the visual metronome.
+    public internal(set) var lastBeat: MetronomeBeat?
+    public internal(set) var progression: Progression = .popFour
+    public internal(set) var progressionUpdate: ProgressionTrainer.BeatUpdate?
+    public internal(set) var isProgressionRunning = false
+    public internal(set) var tuningHistorySummary: TuningHistorySummary = .empty
+    public internal(set) var isRecordingHistory = true
+
+    // MARK: Input devices
+
+    public internal(set) var availableInputDevices: [AudioInputDevice] = []
+    public internal(set) var selectedInputDeviceID: String?
 
     // MARK: - User settings
 
@@ -136,6 +161,17 @@ public final class TunerController {
         }
     }
 
+    /// Capo position in frets; every target string moves up with it.
+    public var capoFret: Int {
+        get { storedSelection.capoFret }
+        set {
+            var updated = storedSelection
+            updated.capoFret = min(max(newValue, 0), TuningPreset.maximumCapoFret)
+            updated.stringSelection = .automatic
+            apply(selection: updated)
+        }
+    }
+
     // MARK: - Internals
 
     /// Keeps the engine-configuration observer alive without touching main-actor state
@@ -151,8 +187,21 @@ public final class TunerController {
     }
 
     #if canImport(AVFoundation)
-    private let engine = AVAudioEngine()
+    // Internal rather than private so the practice/settings extensions in their own files
+    // can reach them. They are not public API.
+    let engine = AVAudioEngine()
     private let eqNode = AVAudioUnitEQ(numberOfBands: 2)
+    /// The analysis path is muted here, *after* the tap, so the microphone is never sent
+    /// to the speakers while the metronome or a reference tone is playing.
+    private let analysisMixer = AVAudioMixerNode()
+    let playback = PlaybackEngine()
+    let settingsStore: SettingsStore
+    var tunerSettings = TunerSettings.default
+    var historyStore: TuningHistoryStore
+    var lastHistorySample: TuningSample?
+    var settingsSaveTask: Task<Void, Never>?
+    var trainer: ProgressionTrainer = ProgressionTrainer(progression: .popFour)
+    var historyRecordCount = 0
     #endif
     private let ringBuffer = AudioSampleRingBuffer()
     private let pipeline: AnalysisPipeline
@@ -163,11 +212,31 @@ public final class TunerController {
     private var wasInTune = false
     private var watchdogTask: Task<Void, Never>?
 
-    public init() {
-        let selection = TuningSelection.default
+    public init(settingsStore: SettingsStore = SettingsStore(), historyStore: TuningHistoryStore = TuningHistoryStore()) {
+        self.settingsStore = settingsStore
+        self.historyStore = historyStore
+        let settings = settingsStore.load()
+        self.tunerSettings = settings
+
+        var selection = TuningSelection.default
+        selection.preset = settings.preset
+        selection.referencePitch = settings.referencePitch
+        selection.stringSelection = settings.stringSelection
+        selection.capoFret = settings.capoFret
+        selection.inTuneToleranceCents = settings.inTuneToleranceCents
         self.storedSelection = selection
+        self.storedInputMode = settings.inputMode
+        self.selectedInputDeviceID = settings.inputDeviceID
         self.activeProfile = AnalysisProfile.make(inputMode: .microphone, selection: selection)
         self.pipeline = AnalysisPipeline(ringBuffer: ringBuffer, selection: selection)
+        self.metronomePattern = MetronomePattern.pattern(id: settings.metronomePatternID) ?? .commonTime
+        self.metronomeTempo = settings.metronomeTempo
+        self.metronomeAccentsEnabled = settings.metronomeAccentsEnabled
+        self.metronomeVolume = settings.metronomeVolume
+        self.isRecordingHistory = settings.recordsTuningHistory
+        self.practiceTarget = settings.practiceVoicingID.flatMap { ChordLibrary.voicing(id: $0) }
+        self.progression = settings.progressionID.flatMap { Progression.progression(id: $0) } ?? .popFour
+        self.trainer = ProgressionTrainer(progression: progression)
 
         pipeline.onReading = { [weak self] reading in
             Task { @MainActor in
@@ -196,6 +265,14 @@ public final class TunerController {
         #endif
 
         updateSpectrumRange()
+        refreshInputDevices()
+        refreshHistorySummary()
+
+        playback.onBeat = { [weak self] beat in
+            guard let self else { return }
+            self.lastBeat = beat
+            self.advanceProgressionIfNeeded()
+        }
     }
 
     public var isRunning: Bool { status.isRunning }
@@ -288,6 +365,8 @@ public final class TunerController {
     private func setInputMode(_ mode: AudioInputMode) {
         guard mode != storedInputMode else { return }
         storedInputMode = mode
+        tunerSettings.inputMode = mode
+        scheduleSettingsSave()
         applyProfile()
     }
 
@@ -299,6 +378,12 @@ public final class TunerController {
             lastStableTarget = nil
             history.removeAll(keepingCapacity: true)
         }
+        tunerSettings.presetID = selection.preset.id
+        tunerSettings.referencePitch = selection.referencePitch
+        tunerSettings.capoFret = selection.capoFret
+        tunerSettings.inTuneToleranceCents = selection.inTuneToleranceCents
+        tunerSettings.lockedStringID = selection.stringSelection.lockedStringID
+        scheduleSettingsSave()
         applyProfile()
     }
 
@@ -336,6 +421,7 @@ public final class TunerController {
         }
         appendHistoryPoint(cents: newReading.cents, isHeld: newReading.isHeld)
         updateHaptics(isInTune: newReading.isInTune)
+        recordTuningSample(from: newReading)
     }
 
     /// A chroma frame arrived: identify the chord and score it against the practice target.
@@ -433,9 +519,17 @@ public final class TunerController {
         configureBands()
 
         engine.connect(input, to: eqNode, format: format)
-        engine.connect(eqNode, to: engine.mainMixerNode, format: format)
-        // Analysis only: the microphone is never monitored, so there is no feedback path.
-        engine.mainMixerNode.outputVolume = 0
+        if analysisMixer.engine == nil {
+            engine.attach(analysisMixer)
+        }
+        engine.connect(eqNode, to: analysisMixer, format: format)
+        engine.connect(analysisMixer, to: engine.mainMixerNode, format: format)
+        // Analysis only: mute the microphone *after* the tap, so the metronome and
+        // reference tones can play at full volume without ever monitoring the input.
+        analysisMixer.outputVolume = 0
+        engine.mainMixerNode.outputVolume = 1
+        playback.attach(to: engine, sampleRate: engine.mainMixerNode.outputFormat(forBus: 0).sampleRate)
+        applyInputDevice()
 
         eqNode.installTap(
             onBus: 0,

@@ -93,7 +93,10 @@ public struct AnalysisProfile: Sendable, Equatable {
 
     public static func make(inputMode: AudioInputMode, selection: TuningSelection) -> AnalysisProfile {
         let baseFilter = inputMode.filter
-        let range = selection.preset.frequencyRange(referencePitch: selection.referencePitch)
+        let range = selection.preset.frequencyRange(
+            capoFret: selection.capoFret,
+            referencePitch: selection.referencePitch
+        )
 
         // Detector search range. A little headroom below the lowest string keeps
         // slightly flat strings inside the range; the top end leaves room for the

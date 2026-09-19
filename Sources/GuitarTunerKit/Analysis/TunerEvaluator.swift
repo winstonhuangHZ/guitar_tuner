@@ -111,11 +111,12 @@ public struct TunerEvaluator: Sendable {
     }
 
     private func candidateStrings(for selection: TuningSelection) -> [InstrumentString] {
-        switch selection.stringSelection {
+        let strings = selection.preset.strings(capoFret: selection.capoFret)
+        return switch selection.stringSelection {
         case .automatic:
-            selection.preset.strings
+            strings
         case let .locked(id):
-            selection.preset.strings.filter { $0.id == id }
+            strings.filter { $0.id == id }
         }
     }
 }

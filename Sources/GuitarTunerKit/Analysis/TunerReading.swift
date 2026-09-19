@@ -18,6 +18,8 @@ public struct TuningSelection: Sendable, Equatable {
     public var preset: TuningPreset
     public var referencePitch: Double
     public var stringSelection: StringSelection
+    /// Capo position in frets: every target string moves up by this much.
+    public var capoFret: Int
     /// Cents window that counts as "in tune".
     public var inTuneToleranceCents: Double
     /// Clarity below which a reading never counts as in tune.
@@ -27,12 +29,14 @@ public struct TuningSelection: Sendable, Equatable {
         preset: TuningPreset = .standardGuitar,
         referencePitch: Double = NoteMath.defaultReferencePitch,
         stringSelection: StringSelection = .automatic,
+        capoFret: Int = 0,
         inTuneToleranceCents: Double = 5,
         minimumClarityForInTune: Double = 0.55
     ) {
         self.preset = preset
         self.referencePitch = referencePitch
         self.stringSelection = stringSelection
+        self.capoFret = min(max(capoFret, 0), TuningPreset.maximumCapoFret)
         self.inTuneToleranceCents = inTuneToleranceCents
         self.minimumClarityForInTune = minimumClarityForInTune
     }
