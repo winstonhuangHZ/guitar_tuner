@@ -82,26 +82,33 @@ public struct PracticeProgressView: View {
             Picker(
                 "Progression",
                 selection: Binding(
-                    get: { controller.progression.id },
+                    get: { controller.progression.templateID },
                     set: { id in
-                        if let progression = Progression.progression(id: id) {
-                            controller.setProgression(progression)
+                        if let template = ProgressionTemplate.template(id: id) {
+                            // A new progression brings its own idiomatic key (minor
+                            // templates start on the relative minor).
+                            let key = template.prefersMinorKey
+                                ? ProgressionKey(tonic: .a, isMinor: true)
+                                : controller.progressionKey
+                            controller.setProgression(template.resolve(in: key))
                         }
                     }
                 )
             ) {
-                ForEach(Progression.all) { progression in
-                    Text("\(progression.name) — \(progression.detail)").tag(progression.id)
+                ForEach(ProgressionTemplate.all) { template in
+                    Text("\(template.name) — \(template.detail)").tag(template.id)
                 }
             }
             .pickerStyle(.menu)
             .labelsHidden()
 
+            keyPicker
+
             // Chord chips with the result of the last run.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(Array(controller.progression.steps.enumerated()), id: \.offset) { index, step in
-                        let name = ChordLibrary.voicing(id: step.voicingID)?.name ?? step.voicingID
+                        let name = step.voicing.name
                         let score = controller.progressionScores.first { $0.id == index }
                         let isCurrent = controller.isProgressionRunning
                             && controller.progressionUpdate?.stepIndex == index
@@ -138,9 +145,42 @@ public struct PracticeProgressView: View {
 
     private var nextChordHint: String {
         guard let voicing = controller.progressionCurrentVoicing else { return "" }
-        let remaining = (controller.progressionUpdate?.beatInStep).map { max(voicing.frets.count, 0) - $0 } ?? 0
-        _ = remaining
         return "Now: \(voicing.name) — \(voicing.quality.displayName)"
+    }
+
+    /// Key selector: the same roman numerals in any of the twelve keys, major or minor.
+    private var keyPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Key").tunerSectionTitle()
+                Spacer()
+                Text(controller.progression.steps.map(\.degree).joined(separator: " – "))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(ProgressionKey.all) { key in
+                        Button {
+                            controller.setProgressionKey(key)
+                        } label: {
+                            Text(key.isMinor ? "\(key.tonic.sharpName)m" : key.tonic.sharpName)
+                                .font(.system(.subheadline, design: .rounded).weight(.medium))
+                                .frame(minWidth: 34)
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(key == controller.progressionKey ? TunerTheme.accent : TunerTheme.subtleFill)
+                                )
+                                .foregroundStyle(key == controller.progressionKey ? TunerTheme.onAccent : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
     }
 
     private func background(for score: ProgressionTrainer.StepScore?, isCurrent: Bool) -> Color {

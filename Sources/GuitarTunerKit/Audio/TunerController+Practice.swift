@@ -74,13 +74,11 @@ public extension TunerController {
     func playProgressionReference() {
         let rate = outputSampleRate
         let steps = progression.steps.map { step -> (frequencies: [Double], seconds: Double) in
-            let frequencies = ChordLibrary.voicing(id: step.voicingID).map {
-                ToneSynthesizer.frequencies(
-                    of: $0,
-                    capoFret: selection.capoFret,
-                    referencePitch: selection.referencePitch
-                )
-            } ?? []
+            let frequencies = ToneSynthesizer.frequencies(
+                of: step.voicing,
+                capoFret: selection.capoFret,
+                referencePitch: selection.referencePitch
+            )
             let seconds = Double(step.beats) * metronomePattern.beatDuration(tempo: metronomeTempo)
             return (frequencies, seconds)
         }
@@ -216,11 +214,20 @@ public extension TunerController {
         progression = newProgression
         trainer.update(progression: newProgression)
         progressionUpdate = nil
-        tunerSettings.progressionID = newProgression.id
+        tunerSettings.progressionID = newProgression.templateID
+        tunerSettings.progressionKeyID = newProgression.key.id
         scheduleSettingsSave()
         if isProgressionRunning {
             setMetronomeTempo(newProgression.defaultTempo)
         }
+    }
+
+    /// Switches the key and rebuilds the progression's shapes.
+    func setProgressionKey(_ key: ProgressionKey) {
+        guard key != progressionKey else { return }
+        progressionKey = key
+        let template = ProgressionTemplate.template(id: progression.templateID) ?? .popFour
+        setProgression(template.resolve(in: key))
     }
 
     /// Starts listening for the progression, with the metronome keeping time.

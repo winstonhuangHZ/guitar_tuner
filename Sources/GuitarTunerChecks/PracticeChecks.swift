@@ -40,7 +40,7 @@ func runSettingsChecks(_ runner: CheckRunner) {
     settings.metronomeVolume = 0.4
     settings.inputDeviceID = "device-42"
     settings.practiceVoicingID = "Am7"
-    settings.progressionID = Progression.popFour.id
+    settings.progressionID = ProgressionTemplate.popFour.id
     settings.recordsTuningHistory = false
     store.save(settings)
 
@@ -79,7 +79,7 @@ func runSettingsChecks(_ runner: CheckRunner) {
     runner.near(fixed.metronomeVolume, 1, accuracy: 1e-9, "volume is clamped")
     runner.equal(fixed.preset.id, TuningPreset.standardGuitar.id, "unknown preset falls back")
     runner.equal(fixed.metronomePatternID, MetronomePattern.commonTime.id, "unknown pattern falls back")
-    runner.equal(fixed.progressionID, Progression.all.first?.id, "unknown progression falls back")
+    runner.equal(fixed.progressionID, ProgressionTemplate.all.first?.id, "unknown progression falls back")
     runner.isNil(fixed.lockedStringID, "impossible string lock is dropped")
     runner.equal(fixed.preset.strings.count, 6, "fallback preset is playable")
 }
@@ -271,26 +271,124 @@ func runToneSynthesizerChecks(_ runner: CheckRunner) {
 func runProgressionChecks(_ runner: CheckRunner) {
     runner.group("Progression practice")
 
-    runner.greater(Progression.all.count, 5, "progression library size")
-    for progression in Progression.all {
-        runner.expect(!progression.steps.isEmpty, "\(progression.name) has steps")
-        for step in progression.steps {
+    runner.greater(ProgressionTemplate.all.count, 5, "progression library size")
+    for template in ProgressionTemplate.all {
+        runner.expect(!template.degrees.isEmpty, "\(template.name) has steps")
+        runner.expect(!template.romanNumerals.isEmpty, "\(template.name) shows its degrees")
+        runner.greater(template.defaultTempo, 0, "\(template.name) has a tempo")
+        for degree in template.degrees {
+            runner.greater(degree.beats, 0, "\(template.name) steps last at least one beat")
             runner.isNotNil(
-                ChordLibrary.voicing(id: step.voicingID),
-                "\(progression.name) uses a chord that exists (\(step.voicingID))"
+                ChordShapes.shapes(for: degree.quality).first,
+                "\(template.name) uses a quality that has a movable shape (\(degree.quality.rawValue))"
             )
-            runner.greater(step.beats, 0, "\(progression.name) steps last at least one beat")
         }
-        runner.equal(
-            progression.totalBeats,
-            progression.steps.reduce(0) { $0 + $1.beats },
-            "\(progression.name) total length"
-        )
+        // Every template must resolve in every key.
+        for key in ProgressionKey.all {
+            let resolved = template.resolve(in: key)
+            runner.equal(
+                resolved.steps.count,
+                template.degrees.count,
+                "\(template.name) resolves fully in \(key.displayName)"
+            )
+        }
     }
 
-    runner.equal(Progression.twelveBarBlues.steps.count, 12, "the blues is twelve bars")
-    runner.equal(Progression.twelveBarBlues.chordNames.first, "E7", "the blues starts on E7")
-    runner.equal(Progression.popFour.chordNames, ["C", "G", "Am", "F"], "I–V–vi–IV in C")
+    runner.equal(ProgressionKey.all.count, 24, "twelve major keys and twelve minor keys")
+    runner.equal(ProgressionTemplate.twelveBarBlues.degrees.count, 12, "the blues is twelve bars")
+
+    // Progression in any key: the chords follow the roman numerals.
+    let popInC = ProgressionTemplate.popFour.resolve(in: ProgressionKey(tonic: .c))
+    let popInG = ProgressionTemplate.popFour.resolve(in: ProgressionKey(tonic: .g))
+    let popInA = ProgressionTemplate.popFour.resolve(in: ProgressionKey(tonic: .a))
+    let popInBFlat = ProgressionTemplate.popFour.resolve(in: ProgressionKey(tonic: .aSharp))
+    runner.equal(Array(popInC.chordNames.prefix(4)), ["C", "G", "Am", "F"], "I–V–vi–IV in C")
+    runner.equal(Array(popInG.chordNames.prefix(4)), ["G", "D", "Em", "C"], "I–V–vi–IV in G")
+    runner.equal(Array(popInA.chordNames.prefix(4)), ["A", "E", "F♯m", "D"], "I–V–vi–IV in A")
+    runner.equal(
+        Array(popInBFlat.chordNames.prefix(4)),
+        ["A♯", "F", "Gm", "D♯"],
+        "I–V–vi–IV in B♭"
+    )
+    runner.equal(popInG.key.displayName, "G", "the key is part of the progression")
+
+    // Familiar progressions keep their classic chords.
+    let bluesInE = ProgressionTemplate.twelveBarBlues.resolve(in: ProgressionKey(tonic: .e))
+    runner.equal(
+        Array(bluesInE.chordNames.prefix(6)),
+        ["E7", "E7", "E7", "E7", "A7", "A7"],
+        "12-bar blues in E"
+    )
+    let andalusianInA = ProgressionTemplate.andalusian.resolve(in: ProgressionKey(tonic: .a, isMinor: true))
+    runner.equal(
+        Array(andalusianInA.chordNames.prefix(4)),
+        ["Am", "G", "F", "E"],
+        "Andalusian in A minor"
+    )
+    let canonInC = ProgressionTemplate.canon.resolve(in: ProgressionKey(tonic: .c))
+    runner.equal(
+        Array(canonInC.chordNames.prefix(4)),
+        ["C", "G", "Am", "Em"],
+        "Canon in C"
+    )
+    let twoFiveOneInF = ProgressionTemplate.twoFiveOne.resolve(in: ProgressionKey(tonic: .f))
+    runner.equal(
+        Array(twoFiveOneInF.chordNames.prefix(3)),
+        ["Gm7", "C7", "Fmaj7"],
+        "ii–V–I in F"
+    )
+    let rockInD = ProgressionTemplate.bluesRock.resolve(in: ProgressionKey(tonic: .d))
+    runner.equal(
+        Array(rockInD.chordNames.prefix(3)),
+        ["D", "C", "G"],
+        "I–♭VII–IV in D"
+    )
+
+    // Generated shapes have to be actually playable.
+    for key in ProgressionKey.all {
+        for template in ProgressionTemplate.all {
+            for step in template.resolve(in: key).steps {
+                let frets = step.voicing.frets
+                runner.expect(
+                    frets.allSatisfy { $0 == nil || (0...15).contains($0!) },
+                    "\(step.voicing.name) stays inside the neck"
+                )
+                runner.expect(
+                    step.voicing.soundingStringCount >= 4,
+                    "\(step.voicing.name) sounds at least four strings"
+                )
+                runner.expect(
+                    step.voicing.pitchClasses.contains(step.voicing.root.rawValue),
+                    "\(step.voicing.name) contains its root"
+                )
+                runner.expect(
+                    step.voicing.hasAllDefiningTones,
+                    "\(step.voicing.name) sounds every defining tone"
+                )
+                runner.expect(
+                    step.voicing.highestFret <= 15,
+                    "\(step.voicing.name) is not absurdly high on the neck"
+                )
+            }
+        }
+    }
+
+    // Near the nut the generated shapes should agree with the written-out library.
+    for id in ["C", "G", "D", "A", "E", "F", "Bm", "Am", "Em", "Dm", "A7", "E7"] {
+        guard let library = ChordLibrary.voicing(id: id),
+              let generated = ChordShapes.voicing(
+                rootPitchClass: library.root.rawValue,
+                quality: library.quality
+              ) else {
+            runner.expect(false, "generated shape for \(id) exists")
+            continue
+        }
+        runner.equal(
+            generated.pitchClasses,
+            library.pitchClasses,
+            "\(id): the movable shape sounds the same notes as the written-out voicing"
+        )
+    }
 
     guard let cMajor = ChordLibrary.voicing(id: "C"), let gMajor = ChordLibrary.voicing(id: "G") else {
         runner.expect(false, "library has C and G")
@@ -298,7 +396,7 @@ func runProgressionChecks(_ runner: CheckRunner) {
     }
 
     // Playing the right chord scores; playing the wrong one does not.
-    var trainer = ProgressionTrainer(progression: Progression.popFour)
+    var trainer = ProgressionTrainer(progression: popInC)
     for _ in 0..<4 {
         _ = trainer.onBeat(chroma: chroma(for: cMajor))
     }
@@ -315,7 +413,7 @@ func runProgressionChecks(_ runner: CheckRunner) {
     runner.equal(trainer.bestStreak, 1, "a wrong chord resets the streak")
 
     // Silence is a miss, not a pass.
-    var silentTrainer = ProgressionTrainer(progression: Progression.popFour)
+    var silentTrainer = ProgressionTrainer(progression: popInC)
     for _ in 0..<4 {
         _ = silentTrainer.onBeat(chroma: .silent)
     }
@@ -323,33 +421,33 @@ func runProgressionChecks(_ runner: CheckRunner) {
     runner.near(silentTrainer.averageScore, 0, accuracy: 1e-9, "silence scores zero")
 
     // The first beat is a grace period: judging starts after it.
-    var impatient = ProgressionTrainer(progression: Progression.popFour)
+    var impatient = ProgressionTrainer(progression: popInC)
     let firstBeat = impatient.onBeat(chroma: chroma(for: gMajor))
     runner.expect(firstBeat?.isStepStart ?? false, "the first beat starts a step")
     runner.expect(impatient.scores.isEmpty, "nothing is scored on the first beat")
 
     // Running the whole progression finishes it.
-    var full = ProgressionTrainer(progression: Progression.popFour)
+    var full = ProgressionTrainer(progression: popInC)
     var finished = false
-    for step in Progression.popFour.steps {
-        guard let voicing = ChordLibrary.voicing(id: step.voicingID) else { continue }
+    for step in popInC.steps {
         for _ in 0..<step.beats {
-            if let update = full.onBeat(chroma: chroma(for: voicing)) {
+            if let update = full.onBeat(chroma: chroma(for: step.voicing)) {
                 finished = update.isFinished
             }
         }
     }
     runner.expect(finished, "the progression reports when it is done")
-    runner.equal(full.scores.count, Progression.popFour.steps.count, "one score per chord")
+    runner.equal(full.scores.count, popInC.steps.count, "one score per chord")
     runner.near(full.accuracy, 1, accuracy: 1e-9, "playing everything correctly is 100%")
-    runner.equal(full.bestStreak, Progression.popFour.steps.count, "the streak counts every chord")
+    runner.equal(full.bestStreak, popInC.steps.count, "the streak counts every chord")
 
     full.reset()
     runner.equal(full.scores.count, 0, "reset clears the scores")
     runner.equal(full.stepIndex, 0, "reset returns to the first chord")
 
-    // Switching progression restarts cleanly.
-    full.update(progression: Progression.twelveBarBlues)
+    // Switching progression or key restarts cleanly.
+    full.update(progression: ProgressionTemplate.twelveBarBlues.resolve(in: ProgressionKey(tonic: .a)))
     runner.equal(full.progression.steps.count, 12, "switching progression works")
+    runner.equal(full.progression.chordNames.first, "A7", "the blues follows its key")
     runner.equal(full.stepIndex, 0, "switching progression restarts")
 }

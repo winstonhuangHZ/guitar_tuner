@@ -1,32 +1,83 @@
 import Foundation
 
-/// One chord in a progression, with how long it is held.
-public struct ProgressionStep: Sendable, Equatable, Identifiable, Codable {
-    public var id: Int
-    /// `ChordLibrary` voicing id, e.g. `C`, `G7`.
-    public var voicingID: String
-    /// Length in metronome beats.
-    public var beats: Int
+/// The key a progression is played in.
+public struct ProgressionKey: Sendable, Equatable, Hashable, Identifiable, Codable {
+    public var tonic: NoteName
+    public var isMinor: Bool
 
-    public init(id: Int, voicingID: String, beats: Int = 4) {
-        self.id = id
-        self.voicingID = voicingID
-        self.beats = max(1, beats)
+    public init(tonic: NoteName, isMinor: Bool = false) {
+        self.tonic = tonic
+        self.isMinor = isMinor
+    }
+
+    public var id: String { "\(tonic.rawValue)-\(isMinor ? "m" : "M")" }
+
+    public var tonicPitchClass: Int { tonic.rawValue }
+
+    /// `C`, `A minor`…
+    public var displayName: String { isMinor ? "\(tonic.sharpName) minor" : tonic.sharpName }
+
+    /// Keys that read better with flats (used for the picker's labels only).
+    public var prefersFlats: Bool {
+        [NoteName.f, .aSharp, .dSharp, .gSharp, .cSharp].contains(tonic)
+    }
+
+    public static let all: [ProgressionKey] = {
+        let majors = NoteName.allCases.map { ProgressionKey(tonic: $0, isMinor: false) }
+        let minors = NoteName.allCases.map { ProgressionKey(tonic: $0, isMinor: true) }
+        return majors + minors
+    }()
+
+    public static let cMajor = ProgressionKey(tonic: .c)
+
+    public static func key(id: String) -> ProgressionKey? {
+        all.first { $0.id == id }
     }
 }
 
-/// A chord progression to practise over the metronome.
+/// One chord of a resolved progression.
+public struct ProgressionStep: Sendable, Equatable, Identifiable, Codable {
+    public var id: Int
+    /// The shape to play — generated from a movable shape, so any key works.
+    public var voicing: ChordVoicing
+    public var beats: Int
+    /// Roman numeral, e.g. `I`, `vi`.
+    public var degree: String
+
+    public init(id: Int, voicing: ChordVoicing, beats: Int = 4, degree: String = "") {
+        self.id = id
+        self.voicing = voicing
+        self.beats = max(1, beats)
+        self.degree = degree
+    }
+
+    public var chordName: String { voicing.name }
+}
+
+/// A progression ready to play: concrete shapes in one key.
 public struct Progression: Sendable, Equatable, Identifiable, Codable {
     public var id: String
+    public var templateID: String
     public var name: String
     public var detail: String
+    public var key: ProgressionKey
     public var steps: [ProgressionStep]
     public var defaultTempo: Double
 
-    public init(id: String, name: String, detail: String, steps: [ProgressionStep], defaultTempo: Double = 80) {
+    public init(
+        id: String,
+        templateID: String,
+        name: String,
+        detail: String,
+        key: ProgressionKey,
+        steps: [ProgressionStep],
+        defaultTempo: Double = 80
+    ) {
         self.id = id
+        self.templateID = templateID
         self.name = name
         self.detail = detail
+        self.key = key
         self.steps = steps
         self.defaultTempo = defaultTempo
     }
@@ -35,78 +86,170 @@ public struct Progression: Sendable, Equatable, Identifiable, Codable {
 
     public func voicing(atStep index: Int) -> ChordVoicing? {
         guard steps.indices.contains(index) else { return nil }
-        return ChordLibrary.voicing(id: steps[index].voicingID)
+        return steps[index].voicing
     }
 
-    public var chordNames: [String] {
-        steps.compactMap { ChordLibrary.voicing(id: $0.voicingID)?.name }
+    public var chordNames: [String] { steps.map(\.chordName) }
+
+    /// `I – V – vi – IV in G`
+    public var displayName: String { "\(name) in \(key.displayName)" }
+}
+
+/// A progression written in scale degrees, which is what makes it playable in any key.
+public struct ProgressionTemplate: Sendable, Equatable, Identifiable, Codable {
+    public struct Degree: Sendable, Equatable, Codable {
+        /// Semitones above the tonic.
+        public var semitones: Int
+        public var quality: ChordQuality
+        public var beats: Int
+        public var roman: String
+
+        public init(semitones: Int, quality: ChordQuality, beats: Int = 4, roman: String) {
+            self.semitones = semitones
+            self.quality = quality
+            self.beats = max(1, beats)
+            self.roman = roman
+        }
     }
 
-    public static func progression(id: String) -> Progression? {
+    public var id: String
+    public var name: String
+    public var detail: String
+    public var degrees: [Degree]
+    public var defaultTempo: Double
+    /// Minor-key progressions use the minor rows of the key picker by default.
+    public var prefersMinorKey: Bool
+
+    public init(
+        id: String,
+        name: String,
+        detail: String,
+        degrees: [Degree],
+        defaultTempo: Double = 80,
+        prefersMinorKey: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.detail = detail
+        self.degrees = degrees
+        self.defaultTempo = defaultTempo
+        self.prefersMinorKey = prefersMinorKey
+    }
+
+    /// The roman numerals, for the picker.
+    public var romanNumerals: String {
+        degrees.map(\.roman).joined(separator: " – ")
+    }
+
+    /// Builds concrete, playable shapes in `key`.
+    public func resolve(in key: ProgressionKey) -> Progression {
+        let steps = degrees.enumerated().compactMap { index, degree -> ProgressionStep? in
+            let pitchClass = ((key.tonicPitchClass + degree.semitones) % 12 + 12) % 12
+            guard let voicing = ChordShapes.voicing(rootPitchClass: pitchClass, quality: degree.quality) else {
+                return nil
+            }
+            return ProgressionStep(id: index, voicing: voicing, beats: degree.beats, degree: degree.roman)
+        }
+        return Progression(
+            id: "\(id)-\(key.id)",
+            templateID: id,
+            name: name,
+            detail: detail,
+            key: key,
+            steps: steps,
+            defaultTempo: defaultTempo
+        )
+    }
+
+    public static func template(id: String) -> ProgressionTemplate? {
         all.first { $0.id == id }
     }
 
-    private static func bars(_ ids: [String], beats: Int = 4) -> [ProgressionStep] {
-        ids.enumerated().map { ProgressionStep(id: $0.offset, voicingID: $0.element, beats: beats) }
+    private static func degrees(_ entries: [(Int, ChordQuality, String)], beats: Int = 4) -> [Degree] {
+        entries.map { Degree(semitones: $0.0, quality: $0.1, beats: beats, roman: $0.2) }
     }
 
-    public static let popFour = Progression(
+    public static let popFour = ProgressionTemplate(
         id: "pop-I-V-vi-IV",
         name: "I – V – vi – IV",
         detail: "The four chords behind a huge number of songs",
-        steps: bars(["C", "G", "Am", "F"]),
+        degrees: degrees([(0, .major, "I"), (7, .major, "V"), (9, .minor, "vi"), (5, .major, "IV")]),
         defaultTempo: 84
     )
 
-    public static let fifties = Progression(
+    public static let fifties = ProgressionTemplate(
         id: "fifties-I-vi-IV-V",
         name: "I – vi – IV – V",
         detail: "Doo-wop changes",
-        steps: bars(["C", "Am", "F", "G"]),
+        degrees: degrees([(0, .major, "I"), (9, .minor, "vi"), (5, .major, "IV"), (7, .major, "V")]),
         defaultTempo: 92
     )
 
-    public static let twoFiveOne = Progression(
+    public static let twoFiveOne = ProgressionTemplate(
         id: "jazz-ii-V-I",
         name: "ii – V – I",
         detail: "The cadence most jazz standards turn on",
-        steps: bars(["Dm7", "G7", "Cmaj7", "Cmaj7"]),
+        degrees: degrees([
+            (2, .minorSeventh, "ii"),
+            (7, .dominantSeventh, "V"),
+            (0, .majorSeventh, "I"),
+            (0, .majorSeventh, "I"),
+        ]),
         defaultTempo: 100
     )
 
-    public static let andalusian = Progression(
+    public static let andalusian = ProgressionTemplate(
         id: "andalusian",
-        name: "Andalusian",
-        detail: "Am – G – F – E, the flamenco descent",
-        steps: bars(["Am", "G", "F", "E"]),
-        defaultTempo: 96
+        name: "i – ♭VII – ♭VI – V",
+        detail: "The flamenco descent",
+        degrees: degrees([(0, .minor, "i"), (10, .major, "♭VII"), (8, .major, "♭VI"), (7, .major, "V")]),
+        defaultTempo: 96,
+        prefersMinorKey: true
     )
 
-    public static let twelveBarBlues = Progression(
+    public static let twelveBarBlues = ProgressionTemplate(
         id: "blues-12-bar",
         name: "12-bar blues",
-        detail: "E7 – A7 – B7",
-        steps: bars(["E7", "E7", "E7", "E7", "A7", "A7", "E7", "E7", "B7", "A7", "E7", "B7"]),
+        detail: "I – IV – V with dominant sevenths",
+        degrees: degrees([
+            (0, .dominantSeventh, "I"), (0, .dominantSeventh, "I"),
+            (0, .dominantSeventh, "I"), (0, .dominantSeventh, "I"),
+            (5, .dominantSeventh, "IV"), (5, .dominantSeventh, "IV"),
+            (0, .dominantSeventh, "I"), (0, .dominantSeventh, "I"),
+            (7, .dominantSeventh, "V"), (5, .dominantSeventh, "IV"),
+            (0, .dominantSeventh, "I"), (7, .dominantSeventh, "V"),
+        ]),
         defaultTempo: 100
     )
 
-    public static let canon = Progression(
+    public static let canon = ProgressionTemplate(
         id: "canon",
-        name: "Canon",
+        name: "I – V – vi – iii – IV – I – IV – V",
         detail: "Pachelbel's eight bars",
-        steps: bars(["C", "G", "Am", "Em", "F", "C", "F", "G"]),
+        degrees: degrees([
+            (0, .major, "I"), (7, .major, "V"), (9, .minor, "vi"), (4, .minor, "iii"),
+            (5, .major, "IV"), (0, .major, "I"), (5, .major, "IV"), (7, .major, "V"),
+        ]),
         defaultTempo: 88
     )
 
-    public static let minorPop = Progression(
+    public static let minorPop = ProgressionTemplate(
         id: "minor-vi-IV-I-V",
         name: "vi – IV – I – V",
         detail: "The same four chords, starting on the relative minor",
-        steps: bars(["Am", "F", "C", "G"]),
+        degrees: degrees([(9, .minor, "vi"), (5, .major, "IV"), (0, .major, "I"), (7, .major, "V")]),
         defaultTempo: 84
     )
 
-    public static let all: [Progression] = [
+    public static let bluesRock = ProgressionTemplate(
+        id: "rock-I-bVII-IV",
+        name: "I – ♭VII – IV",
+        detail: "Mixolydian rock changes",
+        degrees: degrees([(0, .major, "I"), (10, .major, "♭VII"), (5, .major, "IV"), (0, .major, "I")]),
+        defaultTempo: 104
+    )
+
+    public static let all: [ProgressionTemplate] = [
         popFour,
         fifties,
         twoFiveOne,
@@ -114,6 +257,7 @@ public struct Progression: Sendable, Equatable, Identifiable, Codable {
         twelveBarBlues,
         canon,
         minorPop,
+        bluesRock,
     ]
 }
 
@@ -121,7 +265,6 @@ public struct Progression: Sendable, Equatable, Identifiable, Codable {
 public struct ProgressionTrainer: Sendable {
     public struct StepScore: Sendable, Equatable, Identifiable {
         public var id: Int
-        public var voicingID: String
         public var chordName: String
         /// Best match seen while this chord was the current one, 0...1.
         public var bestScore: Double
@@ -199,8 +342,8 @@ public struct ProgressionTrainer: Sendable {
         let isStepStart = beatInStep == 0
 
         // Judge only after the settle window, and only against the chord that is current.
-        if beatInStep >= settleBeats, let chroma, !chroma.isSilent, let voicing = currentVoicing {
-            let evaluation = evaluator.evaluate(chroma: chroma, target: voicing, detection: nil)
+        if beatInStep >= settleBeats, let chroma, !chroma.isSilent {
+            let evaluation = evaluator.evaluate(chroma: chroma, target: step.voicing, detection: nil)
             currentBestScore = max(currentBestScore, evaluation.score)
         }
 
@@ -212,8 +355,7 @@ public struct ProgressionTrainer: Sendable {
             let isCorrect = currentBestScore >= passScore
             let score = StepScore(
                 id: stepIndex,
-                voicingID: step.voicingID,
-                chordName: currentVoicing?.name ?? step.voicingID,
+                chordName: step.voicing.name,
                 bestScore: currentBestScore,
                 isCorrect: isCorrect
             )

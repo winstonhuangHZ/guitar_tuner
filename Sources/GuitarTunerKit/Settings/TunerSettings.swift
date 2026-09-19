@@ -17,6 +17,8 @@ public struct TunerSettings: Sendable, Equatable, Codable {
     public var metronomeVolume: Double
     public var practiceVoicingID: String?
     public var progressionID: String?
+    /// Key the progression is played in.
+    public var progressionKeyID: String
     public var recordsTuningHistory: Bool
 
     public init(
@@ -32,7 +34,8 @@ public struct TunerSettings: Sendable, Equatable, Codable {
         metronomeAccentsEnabled: Bool = true,
         metronomeVolume: Double = 0.7,
         practiceVoicingID: String? = "C",
-        progressionID: String? = Progression.twelveBarBlues.id,
+        progressionID: String? = ProgressionTemplate.twelveBarBlues.id,
+        progressionKeyID: String = ProgressionKey.cMajor.id,
         recordsTuningHistory: Bool = true
     ) {
         self.inputMode = inputMode
@@ -48,6 +51,7 @@ public struct TunerSettings: Sendable, Equatable, Codable {
         self.metronomeVolume = metronomeVolume
         self.practiceVoicingID = practiceVoicingID
         self.progressionID = progressionID
+        self.progressionKeyID = progressionKeyID
         self.recordsTuningHistory = recordsTuningHistory
     }
 
@@ -74,8 +78,11 @@ public struct TunerSettings: Sendable, Equatable, Codable {
         if MetronomePattern.pattern(id: metronomePatternID) == nil {
             copy.metronomePatternID = MetronomePattern.commonTime.id
         }
-        if let id = progressionID, Progression.progression(id: id) == nil {
-            copy.progressionID = Progression.all.first?.id
+        if let id = progressionID, ProgressionTemplate.template(id: id) == nil {
+            copy.progressionID = ProgressionTemplate.all.first?.id
+        }
+        if ProgressionKey.key(id: progressionKeyID) == nil {
+            copy.progressionKeyID = ProgressionKey.cMajor.id
         }
         if let id = practiceVoicingID, ChordLibrary.voicing(id: id) == nil {
             copy.practiceVoicingID = ChordLibrary.guitar.first?.id

@@ -98,7 +98,9 @@ public final class TunerController {
     public internal(set) var metronomeVolume: Double = 0.7
     /// Most recently scheduled click, for the visual metronome.
     public internal(set) var lastBeat: MetronomeBeat?
-    public internal(set) var progression: Progression = .popFour
+    public internal(set) var progression: Progression = ProgressionTemplate.popFour.resolve(in: .cMajor)
+    /// Key the progression is played in; its shapes are generated from this.
+    public internal(set) var progressionKey: ProgressionKey = .cMajor
     public internal(set) var progressionUpdate: ProgressionTrainer.BeatUpdate?
     public internal(set) var isProgressionRunning = false
     public internal(set) var tuningHistorySummary: TuningHistorySummary = .empty
@@ -200,7 +202,9 @@ public final class TunerController {
     var historyStore: TuningHistoryStore
     var lastHistorySample: TuningSample?
     var settingsSaveTask: Task<Void, Never>?
-    var trainer: ProgressionTrainer = ProgressionTrainer(progression: .popFour)
+    var trainer: ProgressionTrainer = ProgressionTrainer(
+        progression: ProgressionTemplate.popFour.resolve(in: .cMajor)
+    )
     var historyRecordCount = 0
     #endif
     private let ringBuffer = AudioSampleRingBuffer()
@@ -235,7 +239,10 @@ public final class TunerController {
         self.metronomeVolume = settings.metronomeVolume
         self.isRecordingHistory = settings.recordsTuningHistory
         self.practiceTarget = settings.practiceVoicingID.flatMap { ChordLibrary.voicing(id: $0) }
-        self.progression = settings.progressionID.flatMap { Progression.progression(id: $0) } ?? .popFour
+        let template = settings.progressionID.flatMap { ProgressionTemplate.template(id: $0) } ?? .popFour
+        let key = settings.progressionKeyID.isEmpty ? .cMajor : (ProgressionKey.key(id: settings.progressionKeyID) ?? .cMajor)
+        self.progressionKey = key
+        self.progression = template.resolve(in: key)
         self.trainer = ProgressionTrainer(progression: progression)
 
         pipeline.onReading = { [weak self] reading in
