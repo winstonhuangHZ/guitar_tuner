@@ -86,6 +86,9 @@ public struct TunerReading: Sendable, Equatable {
     /// Signed cents from `frequency` to `target.frequency`.
     public var cents: Double?
     public var target: PitchTarget?
+    /// Set when the reading could only be matched to a string by treating the measured
+    /// frequency as its 2nd, 3rd… harmonic. A weak low string is usually heard that way.
+    public var harmonicDivisor: Int?
     public var isInTune: Bool
     /// True while the value is being held after the string decayed.
     public var isHeld: Bool
@@ -101,6 +104,7 @@ public struct TunerReading: Sendable, Equatable {
         note: Note? = nil,
         cents: Double? = nil,
         target: PitchTarget? = nil,
+        harmonicDivisor: Int? = nil,
         isInTune: Bool = false,
         isHeld: Bool = false,
         timestamp: TimeInterval = 0
@@ -114,6 +118,7 @@ public struct TunerReading: Sendable, Equatable {
         self.note = note
         self.cents = cents
         self.target = target
+        self.harmonicDivisor = harmonicDivisor
         self.isInTune = isInTune
         self.isHeld = isHeld
         self.timestamp = timestamp

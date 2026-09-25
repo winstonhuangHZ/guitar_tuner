@@ -170,7 +170,7 @@ public struct TunerGaugeView: View {
                 .monospacedDigit()
                 .contentTransition(.numericText())
 
-            Text(hasSignal ? TunerFormat.frequency(reading.frequency) : "play a string")
+            Text(hasSignal ? frequencyLine : "play a string")
                 .font(.system(size: radius * 0.08, weight: .regular, design: .rounded))
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
@@ -186,6 +186,25 @@ public struct TunerGaugeView: View {
         if reading.isInTune, reading.isSignalPresent { return "in tune" }
         if let target { return target.detailedLabel }
         return "—"
+    }
+
+    /// A weak low string is often heard through its 2nd harmonic; saying so explains why
+    /// the string it names can look "wrong" at first glance.
+    private var frequencyLine: String {
+        let base = TunerFormat.frequency(reading.frequency)
+        guard let divisor = reading.harmonicDivisor else { return base }
+        return "\(base) · \(Self.ordinal(divisor)) harmonic"
+    }
+
+    static func ordinal(_ value: Int) -> String {
+        let suffix: String = switch (value % 10, value % 100) {
+        case (1, 11), (2, 12), (3, 13): "th"
+        case (1, _): "st"
+        case (2, _): "nd"
+        case (3, _): "rd"
+        default: "th"
+        }
+        return "\(value)\(suffix)"
     }
 
     // MARK: - Geometry helpers

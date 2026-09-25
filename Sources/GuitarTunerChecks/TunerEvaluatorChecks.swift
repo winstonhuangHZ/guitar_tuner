@@ -81,14 +81,16 @@ func runTunerEvaluatorChecks(_ runner: CheckRunner) {
     runner.near(chromaticReading.cents ?? .nan, 19.56, accuracy: 0.05, "chromatic deviation")
     runner.equal(chromaticReading.target?.kind, PitchTarget.Kind.chromatic, "chromatic target kind")
 
-    // Hysteresis: at the boundary between G3 and B3 the tuner keeps the string it was on.
+    // Hysteresis: near the boundary between two strings the tuner keeps the string it was
+    // on. The A2/D3 boundary is used because the 220 Hz region is ambiguous with the 2nd
+    // harmonic of the A string, which is a different behaviour (see the harmonic checks).
     var hysteresis = TunerEvaluator()
-    let g = evaluate(200, evaluator: &hysteresis)
-    runner.equal(g.target?.id, "string-3", "G3 is matched first")
-    let boundary = evaluate(220.5, evaluator: &hysteresis)
-    runner.equal(boundary.target?.id, "string-3", "hysteresis keeps G3 near the boundary")
-    let moved = evaluate(225, evaluator: &hysteresis)
-    runner.equal(moved.target?.id, "string-4", "a clear move switches to B3")
+    let a = evaluate(112, evaluator: &hysteresis)
+    runner.equal(a.target?.id, "string-1", "A2 is matched first")
+    let boundary = evaluate(127.5, evaluator: &hysteresis)
+    runner.equal(boundary.target?.id, "string-1", "hysteresis keeps A2 near the boundary")
+    let moved = evaluate(140, evaluator: &hysteresis)
+    runner.equal(moved.target?.id, "string-2", "a clear move switches to D3")
 
     // Reference pitch moves every target.
     var selection442 = TuningSelection.default
@@ -115,4 +117,78 @@ func runTunerEvaluatorChecks(_ runner: CheckRunner) {
     let waySharp = evaluate(82.4069 * CheckSignals.ratio(forCents: 240), evaluator: &evaluator)
     runner.greater(waySharp.cents ?? 0, 200, "240 cents sharp is measured")
     runner.near(waySharp.needleCents(limit: 50), 50, accuracy: 0.001, "needle is clamped")
+}
+
+/// A low string whose fundamental is weak is the classic failure of every tuner: the
+/// detector locks onto the 2nd harmonic, and the harmonic is close enough to some *other*
+/// string that the app confidently names the wrong one. On a guitar the low E is 82.4 Hz,
+/// its 2nd harmonic is 164.8 Hz (E3), and 164.8 Hz sits only 200 cents from the D3 string.
+func runHarmonicFoldChecks(_ runner: CheckRunner) {
+    runner.group("Harmonic lock")
+
+    var evaluator = TunerEvaluator()
+    let lowE = 82.4069
+    let aString = 110.0
+
+    // The 2nd harmonic of the low E must be read as the low E, not as D3.
+    let secondHarmonic = evaluate(lowE * 2, evaluator: &evaluator)
+    runner.equal(secondHarmonic.target?.noteName, "E2", "the 2nd harmonic of E2 is read as the 6th string")
+    runner.near(secondHarmonic.cents ?? .nan, 0, accuracy: 0.05, "and it reads in tune")
+    runner.equal(secondHarmonic.harmonicDivisor, 2, "the reading is flagged as a 2nd harmonic")
+
+    // Same story on the A string.
+    let aSecond = evaluate(aString * 2, evaluator: &evaluator)
+    runner.equal(aSecond.target?.noteName, "A2", "the 2nd harmonic of A2 is read as the 5th string")
+    runner.equal(aSecond.harmonicDivisor, 2, "flagged as a harmonic")
+
+    // 247.2 Hz is genuinely ambiguous: it is both the open B string and the 3rd harmonic of
+    // low E, and no amount of signal processing can tell those apart. Auto mode reports the
+    // exact match; locking the string is the way to say which one is meant.
+    let thirdHarmonic = evaluate(lowE * 3, evaluator: &evaluator)
+    runner.equal(
+        thirdHarmonic.target?.noteName,
+        "B3",
+        "the 3rd harmonic is indistinguishable from the open B string"
+    )
+    runner.isNil(thirdHarmonic.harmonicDivisor, "and is not folded")
+
+    var lockedSixth = TuningSelection.default
+    lockedSixth.stringSelection = .locked(0)
+    let lockedThird = evaluate(lowE * 3, selection: lockedSixth, evaluator: &evaluator)
+    runner.equal(lockedThird.target?.noteName, "E2", "with the 6th string locked it belongs to E2")
+    runner.equal(lockedThird.harmonicDivisor, 3, "flagged as a 3rd harmonic")
+
+    // A genuinely played D3 is still D3: the direct interpretation is in tune, so nothing
+    // is folded.
+    let realD = evaluate(146.8324, evaluator: &evaluator)
+    runner.equal(realD.target?.noteName, "D3", "a real D3 is still D3")
+    runner.isNil(realD.harmonicDivisor, "and it is not flagged as a harmonic")
+
+    // A real, slightly sharp low E is not folded either.
+    let realSharpE = evaluate(lowE * CheckSignals.ratio(forCents: 12), evaluator: &evaluator)
+    runner.equal(realSharpE.target?.noteName, "E2", "a 12 cent sharp E2 is E2")
+    runner.near(realSharpE.cents ?? .nan, 12, accuracy: 0.05, "and keeps its deviation")
+    runner.isNil(realSharpE.harmonicDivisor, "no harmonic flag for a fundamental")
+
+    // Folding only happens when it actually lands on a string: a note halfway between
+    // strings must not be disguised as a harmonic.
+    let betweenStrings = evaluate(174.6, evaluator: &evaluator)
+    runner.isNil(
+        betweenStrings.harmonicDivisor,
+        "F3 is not folded into a harmonic (\(betweenStrings.target?.noteName ?? "—") \(String(format: "%+.0f", betweenStrings.cents ?? 0))¢)"
+    )
+
+    // Locking a string makes the fold unconditional: the tuner knows which string the
+    // player is on, so a harmonic reading belongs to that string.
+    var locked = TuningSelection.default
+    locked.stringSelection = .locked(0)
+    let lockedHarmonic = evaluate(lowE * 2, selection: locked, evaluator: &evaluator)
+    runner.equal(lockedHarmonic.target?.noteName, "E2", "with the 6th string locked the harmonic reads as E2")
+    runner.near(lockedHarmonic.cents ?? .nan, 0, accuracy: 0.05, "locked harmonic reads in tune")
+
+    // A string that is genuinely far off still reports its real deviation.
+    let wayFlat = evaluate(lowE * CheckSignals.ratio(forCents: -120), evaluator: &evaluator)
+    runner.equal(wayFlat.target?.noteName, "E2", "a 120 cent flat E2 is still the 6th string")
+    runner.near(wayFlat.cents ?? .nan, -120, accuracy: 0.1, "with its real deviation")
+    runner.isNil(wayFlat.harmonicDivisor, "a detuned fundamental is not a harmonic")
 }
